@@ -1,7 +1,10 @@
 import subprocess
 import sys
+import logging
 from pathlib import Path
 from typing import Optional, List
+
+logger = logging.getLogger(__name__)
 
 def run_fuse(
     model: str,
@@ -33,17 +36,17 @@ def run_fuse(
     if extra_args:
         cmd.extend(extra_args)
 
-    print("=" * 60)
-    print("Fusing LoRA Adapters into Base Model")
-    print(f"  Base Model:   {model}")
-    print(f"  Adapter Path: {adapter_path}")
-    print(f"  Save Path:    {save_path}")
-    print(f"  Dequantize:   {dequantize}")
-    print(f"  Export GGUF:  {export_gguf}")
+    logger.info("=" * 60)
+    logger.info("Fusing LoRA Adapters into Base Model")
+    logger.info(f"  Base Model:   {model}")
+    logger.info(f"  Adapter Path: {adapter_path}")
+    logger.info(f"  Save Path:    {save_path}")
+    logger.info(f"  Dequantize:   {dequantize}")
+    logger.info(f"  Export GGUF:  {export_gguf}")
     if export_gguf and gguf_path:
-        print(f"  GGUF Path:    {gguf_path}")
-    print("=" * 60)
-    print(f"Running command: {' '.join(cmd)}\n")
+        logger.info(f"  GGUF Path:    {gguf_path}")
+    logger.info("=" * 60)
+    logger.info(f"Running command: {' '.join(cmd)}\n")
 
     try:
         process = subprocess.Popen(
@@ -59,16 +62,16 @@ def run_fuse(
             if not line and process.poll() is not None:
                 break
             if line:
-                print(line, end="", flush=True)
+                sys.stdout.write(str(line)); sys.stdout.flush()
                 
         process.wait()
         return process.returncode
     except KeyboardInterrupt:
-        print("\nFusing process interrupted.")
+        logger.info("\nFusing process interrupted.")
         if 'process' in locals():
             process.terminate()
             process.wait()
         return 130
     except Exception as e:
-        print(f"Error running fusing process: {e}")
+        logger.info(f"Error running fusing process: {e}")
         return 1

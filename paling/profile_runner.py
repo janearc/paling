@@ -1,8 +1,11 @@
 import json
+import logging
 from pathlib import Path
 from typing import Optional, Any
 from wonderlib.profiling import profile_sigil
 from wonderlib.git_stats import get_git_stats
+
+logger = logging.getLogger(__name__)
 
 def profile_single_file(
     file_path: Path,
@@ -17,24 +20,24 @@ def profile_single_file(
     """
     try:
         if not file_path.exists():
-            print(f"❌ Error: Sigil file '{file_path}' does not exist.")
+            logger.info(f"❌ Error: Sigil file '{file_path}' does not exist.")
             return False
             
         # Load MLX model if requested and not already passed
         if not model and model_path:
             try:
-                print(f"Loading MLX model from '{model_path}' for rare term extraction...")
+                logger.info(f"Loading MLX model from '{model_path}' for rare term extraction...")
                 from mlx_lm import load
                 model, tokenizer = load(model_path)
             except Exception as e:
-                print(f"⚠️ Warning: Failed to load MLX model '{model_path}': {e}")
-                print("Falling back to fast lexical heuristics.")
+                logger.info(f"⚠️ Warning: Failed to load MLX model '{model_path}': {e}")
+                logger.info("Falling back to fast lexical heuristics.")
                 
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
             
         sigil_stem = file_path.stem
-        print(f"📊 Profiling sigil '{sigil_stem}' ({file_path.name})...")
+        logger.info(f"📊 Profiling sigil '{sigil_stem}' ({file_path.name})...")
         
         # Calculate taxonometry metrics (falls back to lexical heuristics if model/tokenizer are None)
         profiled = profile_sigil(
@@ -52,7 +55,7 @@ def profile_single_file(
                 git_stats = get_git_stats(str(file_path))
                 profiled.git_stats = git_stats
             except Exception as e:
-                print(f"⚠️ Warning: Failed to extract Git statistics for {file_path.name}: {e}")
+                logger.info(f"⚠️ Warning: Failed to extract Git statistics for {file_path.name}: {e}")
                 
         # Write to JSON
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -61,13 +64,13 @@ def profile_single_file(
         with open(out_json_path, "w", encoding="utf-8") as f:
             f.write(profiled.model_dump_json(indent=2))
             
-        print(f"✅ Saved taxonometry profile to: {out_json_path}")
+        logger.info(f"✅ Saved taxonometry profile to: {out_json_path}")
         if profiled.benchmark:
             profiled.benchmark.report()
             
         return True
     except Exception as e:
-        print(f"❌ Failed to profile '{file_path.name}': {e}")
+        logger.info(f"❌ Failed to profile '{file_path.name}': {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -87,10 +90,10 @@ def profile_directory(
         
     sigil_files = list(input_dir.rglob("*.md"))
     if not sigil_files:
-        print(f"No markdown files found in '{input_dir}'.")
+        logger.info(f"No markdown files found in '{input_dir}'.")
         return
         
-    print(f"Discovered {len(sigil_files)} sigil files under '{input_dir}'.")
+    logger.info(f"Discovered {len(sigil_files)} sigil files under '{input_dir}'.")
     
     # Filter files if fix_only is specified
     files_to_profile = []
@@ -103,22 +106,22 @@ def profile_directory(
         files_to_profile.append(sfile)
         
     if not files_to_profile:
-        print("All sigil signatures are already up-to-date.")
+        logger.info("All sigil signatures are already up-to-date.")
         return
         
-    print(f"Preparing to profile {len(files_to_profile)} files...")
+    logger.info(f"Preparing to profile {len(files_to_profile)} files...")
     
     # Load MLX model if model_path is specified, otherwise run model-free
     model = None
     tokenizer = None
     if model_path:
         try:
-            print(f"Loading MLX model from '{model_path}' for rare term extraction...")
+            logger.info(f"Loading MLX model from '{model_path}' for rare term extraction...")
             from mlx_lm import load
             model, tokenizer = load(model_path)
         except Exception as e:
-            print(f"⚠️ Warning: Failed to load MLX model '{model_path}': {e}")
-            print("Falling back to fast lexical heuristics.")
+            logger.info(f"⚠️ Warning: Failed to load MLX model '{model_path}': {e}")
+            logger.info("Falling back to fast lexical heuristics.")
             
     success_count = 0
     for sfile in files_to_profile:
@@ -132,4 +135,4 @@ def profile_directory(
         if success:
             success_count += 1
             
-    print(f"Done. Successfully profiled {success_count}/{len(files_to_profile)} files.")
+    logger.info(f"Done. Successfully profiled {success_count}/{len(files_to_profile)} files.")

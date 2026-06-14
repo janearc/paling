@@ -1,9 +1,12 @@
 import asyncio
+import logging
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Optional, Any
 from enum import Enum
 import sys
+
+logger = logging.getLogger(__name__)
 
 # State machine definitions
 class BentoState(str, Enum):
@@ -94,6 +97,6 @@ def serve(port: int = 8090):
         # Enforce checkpoint / registration
         pass
     except Exception as e:
-        print(f"Failed to register with delightd: {e}")
+        logger.info(f"Failed to register with delightd: {e}")
 
     uvicorn.run(app, host="127.0.0.1", port=port)

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 import argparse
+import logging
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Ensure the parent directory is in python path to import our modules
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -331,7 +334,7 @@ def main():
                 taxonometry_dir=args.taxonometry_dir
             )
         except Exception as e:
-            print(f"Error during preparation: {e}", file=sys.stderr)
+            logger.error(f"Error during preparation: {e}")
             sys.exit(1)
             
     elif args.command == "train":
@@ -355,7 +358,7 @@ def main():
         if adapter_path:
             p = Path(adapter_path)
             if not (p / "adapter_config.json").exists() and not (p / "adapters.safetensors").exists():
-                print(f"LoRA adapter files not found in '{adapter_path}'. Running base model only.")
+                logger.info(f"LoRA adapter files not found in '{adapter_path}'. Running base model only.")
                 adapter_path = None
                 
         run_interactive_chat(
@@ -388,9 +391,9 @@ def main():
             dryRun=args.dry_run,
         )
         if err:
-            print(f"Checkpoint failed: {err}", file=sys.stderr)
+            logger.error(f"Checkpoint failed: {err}")
             sys.exit(1)
-        print(f"Checkpoint created at {archive_path}")
+        logger.info(f"Checkpoint created at {archive_path}")
         sys.exit(0)
 
     elif args.command == "profile":
@@ -414,7 +417,7 @@ def main():
                 fix_only=args.fix_only
             )
         else:
-            print(f"Error: Input path '{args.input}' does not exist or is neither a file nor a directory.", file=sys.stderr)
+            logger.error(f"Error: Input path '{args.input}' does not exist or is neither a file nor a directory.")
             sys.exit(1)
 
     elif args.command == "paint":

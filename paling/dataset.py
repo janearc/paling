@@ -1,9 +1,12 @@
 import json
+import logging
 import os
 import re
 import random
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
+
+logger = logging.getLogger(__name__)
 
 # A default system prompt for knowledge injection
 DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant with access to the user's personal notes and documentation. Use this knowledge to answer questions accurately and concisely."
@@ -127,7 +130,7 @@ def parse_rlhf_directory(rlhf_dir: Path) -> List[Dict[str, str]]:
     """
     rlhf_data = []
     if not rlhf_dir.exists():
-        print(f"Warning: RLHF directory '{rlhf_dir}' does not exist. Skipping.")
+        logger.info(f"Warning: RLHF directory '{rlhf_dir}' does not exist. Skipping.")
         return rlhf_data
         
     for file in rlhf_dir.glob("**/*-review.json"):
@@ -160,9 +163,9 @@ def parse_rlhf_directory(rlhf_dir: Path) -> List[Dict[str, str]]:
                         "source": file.name
                     })
         except Exception as e:
-            print(f"Warning: Failed to parse RLHF file '{file}': {e}")
+            logger.info(f"Warning: Failed to parse RLHF file '{file}': {e}")
             
-    print(f"Parsed {len(rlhf_data)} approved QA pairs from RLHF reviews.")
+    logger.info(f"Parsed {len(rlhf_data)} approved QA pairs from RLHF reviews.")
     return rlhf_data
 
 def parse_taxonometry_directory(tax_dir: Path) -> List[Dict[str, Any]]:
@@ -171,7 +174,7 @@ def parse_taxonometry_directory(tax_dir: Path) -> List[Dict[str, Any]]:
     """
     tax_data = []
     if not tax_dir.exists():
-        print(f"Warning: Taxonometry directory '{tax_dir}' does not exist. Skipping.")
+        logger.info(f"Warning: Taxonometry directory '{tax_dir}' does not exist. Skipping.")
         return tax_data
         
     for file in tax_dir.glob("**/*-taxonometry.json"):
@@ -192,9 +195,9 @@ def parse_taxonometry_directory(tax_dir: Path) -> List[Dict[str, Any]]:
                 "source": file.name
             })
         except Exception as e:
-            print(f"Warning: Failed to parse Taxonometry file '{file}': {e}")
+            logger.info(f"Warning: Failed to parse Taxonometry file '{file}': {e}")
             
-    print(f"Parsed {len(tax_data)} Taxonometry profile definitions.")
+    logger.info(f"Parsed {len(tax_data)} Taxonometry profile definitions.")
     return tax_data
 
 def build_datasets(
@@ -225,17 +228,17 @@ def build_datasets(
     if not md_files:
         raise ValueError(f"No markdown files found in {input_dir}")
         
-    print(f"Found {len(md_files)} markdown files.")
+    logger.info(f"Found {len(md_files)} markdown files.")
     
     # Try loading tokenizer if model_path is provided and mode requires chunking
     tokenizer = None
     if model_path and mode == "raw_text":
         try:
-            print(f"Loading tokenizer from {model_path} for token-based chunking...")
+            logger.info(f"Loading tokenizer from {model_path} for token-based chunking...")
             from transformers import AutoTokenizer
             tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         except Exception as e:
-            print(f"Failed to load tokenizer ({e}). Falling back to word-based chunking.")
+            logger.info(f"Failed to load tokenizer ({e}). Falling back to word-based chunking.")
             
     dataset_records = []
     
@@ -295,7 +298,7 @@ def build_datasets(
                 dataset_records.append(record)
                 
         except Exception as e:
-            print(f"Error processing {md_file}: {e}")
+            logger.info(f"Error processing {md_file}: {e}")
             
     # 2. Incorporate RLHF QA Pairs
     if rlhf_dir:
@@ -390,9 +393,9 @@ def build_datasets(
         for rec in val_records:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             
-    print(f"Dataset creation complete:")
-    print(f"  Total records: {len(dataset_records)}")
-    print(f"  Training records saved to {train_file} ({len(train_records)} items)")
-    print(f"  Validation records saved to {valid_file} ({len(val_records)} items)")
+    logger.info("Dataset creation complete:")
+    logger.info(f"  Total records: {len(dataset_records)}")
+    logger.info(f"  Training records saved to {train_file} ({len(train_records)} items)")
+    logger.info(f"  Validation records saved to {valid_file} ({len(val_records)} items)")
     
     return len(train_records), len(val_records)

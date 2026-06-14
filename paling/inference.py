@@ -1,12 +1,15 @@
 import sys
+import logging
 import traceback
 from pathlib import Path
 from typing import List, Dict, Optional
 from mlx_lm import load, stream_generate
 
+logger = logging.getLogger(__name__)
+
 class ChatSession:
     def __init__(self, model_path: str, adapter_path: Optional[str] = None, system_prompt: Optional[str] = None):
-        print(f"Loading model from '{model_path}'...")
+        logger.info(f"Loading model from '{model_path}'...")
         
         self.system_prompt = system_prompt
         self.history = []
@@ -29,21 +32,21 @@ class ChatSession:
         # 2. Initialize GGUF model via llama-cpp-python
         if self.is_gguf:
             if adapter_path:
-                print("⚠️ Warning: LoRA adapters are not supported for GGUF models in this mode. Running base model only.")
+                logger.info("⚠️ Warning: LoRA adapters are not supported for GGUF models in this mode. Running base model only.")
                 
             try:
                 import llama_cpp
             except ImportError:
-                print("\n" + "=" * 80)
-                print("❌ Error: To run GGUF models, you must install 'llama-cpp-python' in your environment.")
-                print("To compile with hardware Metal GPU Acceleration on Apple Silicon, run:")
-                print("  CMAKE_ARGS='-DLLAMA_METAL=on' pip install llama-cpp-python")
-                print("Or using poetry:")
-                print("  CMAKE_ARGS='-DLLAMA_METAL=on' poetry run pip install llama-cpp-python")
-                print("=" * 80 + "\n")
+                logger.info("\n" + "=" * 80)
+                logger.info("❌ Error: To run GGUF models, you must install 'llama-cpp-python' in your environment.")
+                logger.info("To compile with hardware Metal GPU Acceleration on Apple Silicon, run:")
+                logger.info("  CMAKE_ARGS='-DLLAMA_METAL=on' pip install llama-cpp-python")
+                logger.info("Or using poetry:")
+                logger.info("  CMAKE_ARGS='-DLLAMA_METAL=on' poetry run pip install llama-cpp-python")
+                logger.info("=" * 80 + "\n")
                 sys.exit(1)
                 
-            print(f"Initializing GGUF model from '{self.gguf_path}' via llama_cpp (Metal GPU enabled)...")
+            logger.info(f"Initializing GGUF model from '{self.gguf_path}' via llama_cpp (Metal GPU enabled)...")
             try:
                 self.model = llama_cpp.Llama(
                     model_path=str(self.gguf_path),
@@ -52,14 +55,14 @@ class ChatSession:
                     verbose=False
                 )
             except Exception as e:
-                print(f"❌ Failed to load GGUF model: {e}")
+                logger.info(f"❌ Failed to load GGUF model: {e}")
                 raise e
             self.tokenizer = None
         
         # 3. Initialize MLX model via mlx-lm
         else:
             if adapter_path:
-                print(f"Loading LoRA adapter from '{adapter_path}'...")
+                logger.info(f"Loading LoRA adapter from '{adapter_path}'...")
             self.model, self.tokenizer = load(model_path, adapter_path=adapter_path)
             
         self.reset_history()
@@ -86,13 +89,13 @@ class ChatSession:
                 for chunk in response:
                     delta = chunk['choices'][0]['delta']
                     if 'content' in delta:
-                        print(delta['content'], end='', flush=True)
+                        sys.stdout.write(str(delta['content'])); sys.stdout.flush()
                         response_text += delta['content']
-                print() # Print final newline
+                logger.info("") # Print final newline
             except KeyboardInterrupt:
-                print("\n[Generation interrupted]")
+                logger.info("\n[Generation interrupted]")
             except Exception as e:
-                print(f"\n[Error during GGUF generation: {e}]")
+                logger.info(f"\n[Error during GGUF generation: {e}]")
                 traceback.print_exc()
         
         # 2. MLX Streaming Inference
@@ -123,13 +126,13 @@ class ChatSession:
                     max_tokens=max_tokens,
                     temp=temp
                 ):
-                    print(response.text, end="", flush=True)
+                    sys.stdout.write(str(response.text)); sys.stdout.flush()
                     response_text += response.text
-                print() # Print final newline
+                logger.info("") # Print final newline
             except KeyboardInterrupt:
-                print("\n[Generation interrupted]")
+                logger.info("\n[Generation interrupted]")
             except Exception as e:
-                print(f"\n[Error during MLX generation: {e}]")
+                logger.info(f"\n[Error during MLX generation: {e}]")
                 traceback.print_exc()
                 
         if response_text:
@@ -143,22 +146,22 @@ def run_interactive_chat(model_path: str, adapter_path: Optional[str] = None, sy
     try:
         session = ChatSession(model_path, adapter_path, system_prompt)
     except Exception as e:
-        print(f"Error loading model: {e}")
+        logger.info(f"Error loading model: {e}")
         traceback.print_exc()
         return
 
-    print("\n" + "=" * 50)
-    print("Interactive Chat Session Started.")
-    print("Commands:")
-    print("  /exit or /quit - Exit the session")
-    print("  /clear         - Clear conversation history")
-    print("=" * 50 + "\n")
+    logger.info("\n" + "=" * 50)
+    logger.info("Interactive Chat Session Started.")
+    logger.info("Commands:")
+    logger.info("  /exit or /quit - Exit the session")
+    logger.info("  /clear         - Clear conversation history")
+    logger.info("=" * 50 + "\n")
 
     while True:
         try:
             user_input = input("You > ")
         except (KeyboardInterrupt, EOFError):
-            print("\nExiting.")
+            logger.info("\nExiting.")
             break
 
         cleaned_input = user_input.strip()
@@ -166,14 +169,14 @@ def run_interactive_chat(model_path: str, adapter_path: Optional[str] = None, sy
             continue
 
         if cleaned_input.lower() in ["/exit", "/quit"]:
-            print("Exiting.")
+            logger.info("Exiting.")
             break
 
         if cleaned_input.lower() == "/clear":
             session.reset_history()
-            print("Conversation history cleared.")
+            logger.info("Conversation history cleared.")
             continue
 
-        print("Assistant > ", end="", flush=True)
+        sys.stdout.write(str("Assistant > ")); sys.stdout.flush()
         session.send_message(cleaned_input)
-        print()
+        logger.info("")

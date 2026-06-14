@@ -76,6 +76,10 @@ def test_checkpoint_args_parsing(tmp_path, monkeypatch):
     sys.modules["delightd.pkg"] = mock_delightd.pkg
     sys.modules["delightd.pkg.backup"] = mock_backup_module
 
+    import logging
+    logging.getLogger("paling_cli_script").setLevel(logging.INFO)
+    logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+
     result = run_cli_in_process([
         "checkpoint",
         "-p",

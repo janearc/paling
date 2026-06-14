@@ -1,27 +1,88 @@
 syntax = "proto3";
 
-package paling.events;
+package paling.events.v1;
 
-message BanchanEvent {
-  string bento_id = 1;
-  string banchan_name = 2;
+import "google/protobuf/timestamp.proto";
+
+// Represents the overall status of a specific Banchan execution
+enum BanchanState {
+  BANCHAN_STATE_UNSPECIFIED = 0;
+  BANCHAN_STATE_QUEUED = 1;
+  BANCHAN_STATE_IN_PROGRESS = 2;
+  BANCHAN_STATE_PARTIAL = 3;
+  BANCHAN_STATE_NEEDS_MASSAGE = 4;
+  BANCHAN_STATE_COMPLETED = 5;
+  BANCHAN_STATE_FAILED = 6;
+}
+
+// Model Lineage defines exactly which base model and LoRA adapter weights 
+// this Banchan is associated with to prevent cross-contamination.
+message ModelLineage {
+  string base_model_hash = 1;
+  string adapter_id = 2;
+}
+
+// The generic event envelope emitted by the Paling orchestration daemon
+message BanchanLifecycleEvent {
+  // Unique identifier for this specific event occurrence
+  string event_id = 1;
   
-  enum State {
-    NOT_STARTED = 0;
-    IN_PROGRESS = 1;
-    PARTIAL = 2;
-    NEEDS_MASSAGE = 3;
-    DONE = 4;
-    FAILED = 5;
+  // Distributed tracing context (Context/ctx propagation)
+  string trace_id = 2;
+  string parent_event_id = 3;
+
+  // Formal protobuf timestamp
+  google.protobuf.Timestamp occurred_at = 4;
+
+  // Banchan routing coordinates
+  string bento_id = 5;
+  string banchan_name = 6;
+  
+  // Execution State
+  BanchanState state = 7;
+  
+  // Lineage validation
+  ModelLineage model_lineage = 8;
+  
+  // Rich strictly-typed payload dependent on the banchan architecture
+  oneof payload {
+    TopologyMetadata topology_metadata = 9;
+    TraceurMetrics traceur_metrics = 10;
+    TrainingProgress training_progress = 11;
+    ToolInvocation tool_invocation = 12;
   }
   
-  State state = 3;
-  int64 timestamp = 4;
-  
-  // Optional field reserved for future external tool executor events
-  // See Milestone: paling-acceptance-criteria
-  string tool_event = 5;
-  
-  // Optional error message if state is FAILED
-  string error_message = 6;
+  // Explicit failure context if state is BANCHAN_STATE_FAILED
+  string error_message = 15;
+}
+
+// Payload: Lexical Cartography (Cartographer Banchan)
+message TopologyMetadata {
+  int32 total_nodes = 1;
+  int32 total_edges = 2;
+  int32 discovered_clusters = 3;
+  string projection_metric = 4;
+}
+
+// Payload: Temporal Inspection (Traceur)
+message TraceurMetrics {
+  double peak_deviation_score = 1;
+  double average_innovation = 2;
+  int32 trajectory_steps = 3;
+  string target_feature = 4; // e.g. "deception"
+}
+
+// Payload: QLoRA Fine-Tuning
+message TrainingProgress {
+  int32 current_epoch = 1;
+  int32 total_epochs = 2;
+  double current_loss = 3;
+  double learning_rate = 4;
+}
+
+// Payload: External Acceptance Criteria Executions
+message ToolInvocation {
+  string tool_name = 1;
+  string parameters_json = 2;
+  string acceptance_criteria_version = 3;
 }

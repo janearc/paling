@@ -153,5 +153,15 @@ class Traceur:
                 "model_config": config_dict
             }
         }
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2)
+        try:
+            # Ensure the target directory exists
+            import os
+            os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+            logger.info(f"Successfully dumped mechanistic interpretability trace to: {filepath}")
+        except Exception as e:
+            logger.error(f"Critical failure dumping mechanistic interpretability trace to {filepath}: {e}")
+            # We swallow the error here because failing to dump a diagnostic trace 
+            # should never crash the primary inference loop.

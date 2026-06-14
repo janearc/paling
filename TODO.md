@@ -1,0 +1,1 @@
+- [ ] Add Schema Registry (Buf or Redpanda) for banchan_event.proto before 1.0 stable release

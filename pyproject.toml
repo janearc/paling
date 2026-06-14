@@ -21,6 +21,8 @@ dependencies = [
     "hdbscan",
     "umap-learn",
     "scikit-learn",
+    "transformer_lens",
+    "sae_lens",
 ]
 
 [project.optional-dependencies]

@@ -1,3 +1,22 @@
+// ==============================================================================
+// Paling Service Mesh Sidecar (Go)
+// ==============================================================================
+// This service operates as the cluster-facing interface for the Paling ecosystem.
+// While the primary Paling daemon MUST run on bare-metal to access Apple Silicon
+// (Metal GPU) for MLX operations, the rest of the hyperscaler fleet relies on 
+// containerized service discovery (Traefik) and observability (Prometheus).
+// 
+// Core Responsibilities:
+// 1. Service Mesh Bridging: Registers the bare-metal Paling node with the 
+//    central `delightd` control plane and exposes standard ports to Traefik.
+// 2. Liveness Polling: Continuously polls the bare-metal daemon across the 
+//    host boundary (`host.docker.internal:8090`) to ensure MLX hasn't crashed.
+// 3. Telemetry Export: Aggregates error rates, time-of-day histograms, and 
+//    success counters, re-exposing them to the cluster's Prometheus scraper 
+//    on port 9090.
+// 4. Fault Tolerance: Implements exponential backoff and jitter on all network 
+//    boundaries to prevent thundering herds during cluster-wide reboots.
+// ==============================================================================
 package main
 
 import (
@@ -40,7 +59,9 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-// exponentialBackoff with jitter
+// exponentialBackoff calculates network retry delays using a binary exponential 
+// backoff algorithm capped at 30 seconds, injecting 10% randomized jitter 
+// to prevent thundering herd phenomena against the control plane.
 func exponentialBackoff(attempt int) time.Duration {
 	base := 100 * time.Millisecond
 	cap := 30 * time.Second
@@ -69,7 +90,9 @@ func doWithRetries(operation func() error) error {
 }
 
 func registerWithDelightd() error {
-	// Dummy payload to simulate registration
+	// Construct the service registration payload for the control plane.
+	// This declares our presence to delightd so Traefik can dynamically route 
+	// cluster traffic to our exposed sidecar port.
 	payload := map[string]interface{}{
 		"service": "paling",
 		"port":    9090, // We expose sidecar on 9090
@@ -80,7 +103,8 @@ func registerWithDelightd() error {
 		return err
 	}
 	
-	// Traefik will actually route it, here we assume delightd is available on localhost for the sidecar
+	// Execute the registration HTTP request. We assume delightd is reachable 
+	// locally or via standard mesh routing rules.
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err

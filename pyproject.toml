@@ -50,3 +50,10 @@ packages = [
 
 [tool.uv]
 environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "T201"]  # T201 = flake8-print (bans print statements)
+ignore = []

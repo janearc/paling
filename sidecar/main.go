@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"math/rand"
 	"net/http"
@@ -100,7 +99,7 @@ func pollPaling() {
 
 	for range ticker.C {
 		err := doWithRetries(func() error {
-			resp, err := http.Get("http://host.docker.internal:8080/health")
+			resp, err := http.Get("http://host.docker.internal:8090/health")
 			if err != nil {
 				return err
 			}

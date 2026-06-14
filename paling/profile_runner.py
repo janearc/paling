@@ -2,7 +2,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Optional, Any
-from wonderlib.profiling import profile_sigil
+from wonderlib.profiling import profile_document
 from wonderlib.git_stats import get_git_stats
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ def profile_single_file(
     """
     try:
         if not file_path.exists():
-            logger.info(f"❌ Error: Sigil file '{file_path}' does not exist.")
+            logger.info(f"❌ Error: Document file '{file_path}' does not exist.")
             return False
             
         # Load MLX model if requested and not already passed
@@ -36,13 +36,13 @@ def profile_single_file(
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
             
-        sigil_stem = file_path.stem
-        logger.info(f"📊 Profiling sigil '{sigil_stem}' ({file_path.name})...")
+        doc_stem = file_path.stem
+        logger.info(f"📊 Profiling document '{doc_stem}' ({file_path.name})...")
         
         # Calculate taxonometry metrics (falls back to lexical heuristics if model/tokenizer are None)
-        profiled = profile_sigil(
+        profiled = profile_document(
             text=content,
-            title=sigil_stem,
+            title=doc_stem,
             model=model,
             tokenizer=tokenizer
         )
@@ -59,7 +59,7 @@ def profile_single_file(
                 
         # Write to JSON
         output_dir.mkdir(parents=True, exist_ok=True)
-        out_json_path = output_dir / f"{sigil_stem}-taxonometry.json"
+        out_json_path = output_dir / f"{doc_stem}-taxonometry.json"
         
         with open(out_json_path, "w", encoding="utf-8") as f:
             f.write(profiled.model_dump_json(indent=2))
@@ -88,16 +88,16 @@ def profile_directory(
     if not input_dir.exists() or not input_dir.is_dir():
         raise ValueError(f"Input directory '{input_dir}' is not valid.")
         
-    sigil_files = list(input_dir.rglob("*.md"))
-    if not sigil_files:
+    md_files = list(input_dir.rglob("*.md"))
+    if not md_files:
         logger.info(f"No markdown files found in '{input_dir}'.")
         return
         
-    logger.info(f"Discovered {len(sigil_files)} sigil files under '{input_dir}'.")
+    logger.info(f"Discovered {len(md_files)} document files under '{input_dir}'.")
     
     # Filter files if fix_only is specified
     files_to_profile = []
-    for sfile in sigil_files:
+    for sfile in md_files:
         if fix_only:
             out_file = output_dir / f"{sfile.stem}-taxonometry.json"
             if out_file.exists():
@@ -106,7 +106,7 @@ def profile_directory(
         files_to_profile.append(sfile)
         
     if not files_to_profile:
-        logger.info("All sigil signatures are already up-to-date.")
+        logger.info("All document signatures are already up-to-date.")
         return
         
     logger.info(f"Preparing to profile {len(files_to_profile)} files...")

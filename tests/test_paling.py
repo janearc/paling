@@ -6,7 +6,7 @@ import json
 
 from paling.dataset import parse_markdown_to_sections, chunk_text_by_words, build_datasets
 from wonderlib.markdown_xml import markdown_to_xml
-from wonderlib.profiling import RarityAnalyzer, profile_sigil
+from wonderlib.profiling import RarityAnalyzer, profile_document
 from wonderlib.git_stats import GitStats, GitCommitEntry
 
 class TestPalingAndWonderLib(unittest.TestCase):
@@ -82,23 +82,23 @@ class TestPalingAndWonderLib(unittest.TestCase):
         self.assertGreater(cluster[0], 0)
         self.assertGreater(cluster[2], 0)
 
-    def test_profile_sigil_offline(self):
+    def test_profile_document_offline(self):
         """
-        Test sigil profiling using model-free lexical heuristics.
+        Test document profiling using model-free lexical heuristics.
         """
-        md_content = "# Test Sigil\n\nThis is a simple note with some terms."
-        profile = profile_sigil(
+        md_content = "# Test Document\n\nThis is a simple note with some terms."
+        profile = profile_document(
             text=md_content,
-            title="test-sigil"
+            title="test-document"
         )
         
-        self.assertEqual(profile.title, "test-sigil")
+        self.assertEqual(profile.title, "test-document")
         self.assertGreater(profile.zipf_avg, 0.0)
         self.assertIsInstance(profile.rare_terms, list)
 
-    def test_profile_sigil_with_mock_model(self):
+    def test_profile_document_with_mock_model(self):
         """
-        Test sigil profiling using a mocked LLM analyzer.
+        Test document profiling using a mocked LLM analyzer.
         """
         mock_model = MagicMock()
         mock_tokenizer = MagicMock()
@@ -106,15 +106,15 @@ class TestPalingAndWonderLib(unittest.TestCase):
         with patch("wonderlib.profiling.RarityAnalyzer.extract_rare_terms") as mock_extract:
             mock_extract.return_value = ["MockTermA", "MockTermB"]
             
-            md_content = "# Test Sigil\n\nThis is a simple note."
-            profile = profile_sigil(
+            md_content = "# Test Document\n\nThis is a simple note."
+            profile = profile_document(
                 text=md_content,
-                title="test-sigil",
+                title="test-document",
                 model=mock_model,
                 tokenizer=mock_tokenizer
             )
             
-            self.assertEqual(profile.title, "test-sigil")
+            self.assertEqual(profile.title, "test-document")
             self.assertEqual(profile.rare_terms, ["MockTermA", "MockTermB"])
 
     def test_dataset_compilation_with_rlhf_and_tax(self):
@@ -125,7 +125,7 @@ class TestPalingAndWonderLib(unittest.TestCase):
             tmp_path = Path(tmp_dir)
             
             # 1. Create source markdown
-            md_dir = tmp_path / "sigils"
+            md_dir = tmp_path / "documents"
             md_dir.mkdir()
             with open(md_dir / "note1.md", "w") as f:
                 f.write("# Topic A\nContent description.")

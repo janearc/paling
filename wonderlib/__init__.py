@@ -1,9 +1,9 @@
 from wonderlib.profiling import (
-    SigilProfile,
-    SigilProfileCorpus,
+    TaxonometryProfile,
+    TaxonometryCorpus,
     RarityAnalyzer,
-    profile_sigil,
-    DataToSigilProfileCorpus
+    profile_document,
+    DataToTaxonometryCorpus
 )
 from wonderlib.benchmark import Benchmark
 from wonderlib.git_stats import GitStats, GitCommitEntry, get_git_stats

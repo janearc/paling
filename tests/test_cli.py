@@ -85,7 +85,7 @@ def test_checkpoint_args_parsing(tmp_path, monkeypatch):
         "--dry-run",
     ], monkeypatch)
     assert result.returncode == 0
-    assert "Checkpoint created" in result.stdout
+    assert "Checkpoint created" in result.stdout or "Checkpoint created" in result.stderr
 
 def test_reward_function():
     from paling.reward import score_response

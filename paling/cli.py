@@ -282,7 +282,7 @@ def main():
 
     parser_prof = subparsers.add_parser(
         "profile",
-        help="Generate taxonometric profile of sigils using Zipf average, part-of-speech complexity, and rare term extraction",
+        help="Generate taxonometric profile of documents using Zipf average, part-of-speech complexity, and rare term extraction",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser_prof.add_argument(
@@ -292,7 +292,7 @@ def main():
     )
     parser_prof.add_argument(
         "--output-dir", "-o",
-        default="data/taxonometry/sigil",
+        default="data/taxonometry/profiles",
         help="Directory where the generated taxonometry JSON profiles should be saved"
     )
     parser_prof.add_argument(

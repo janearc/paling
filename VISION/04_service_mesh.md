@@ -11,13 +11,13 @@ Following the success of the `comfyui-svc` deployment:
 
 ## Asynchronous Bento Operations
 
-The user must be able to ask `delightd`: *"hey how long until paling is done with the wonder-sigils-123 bento?"*
+The user must be able to ask `delightd`: *"hey how long until paling is done with the wonder-documents-123 bento?"*
 This requires Paling to maintain a state machine of active jobs and expose their progress.
 
 ## Knockout List
 
 - [ ] Refactor `paling.py` to support running as a long-lived daemon instead of just a single-execution script.
 - [ ] Build a Go sidecar for Paling (similar to ComfyUI) that listens on a port and serves `/metrics` for `transparent`.
-- [ ] Implement a REST/MCP endpoint in the Paling daemon that returns the status of a specific Bento (e.g., `GET /bento/wonder-sigils-123/status`).
+- [ ] Implement a REST/MCP endpoint in the Paling daemon that returns the status of a specific Bento (e.g., `GET /bento/wonder-documents-123/status`).
 - [ ] Add percentage-based progress tracking to the MLX training loop and Taxonometry generation, surfacing this data to the sidecar.
 - [ ] Create a `docker-compose.yml` (or LaunchDaemon plist) to codify the hybrid deployment of the Paling daemon + Go sidecar.

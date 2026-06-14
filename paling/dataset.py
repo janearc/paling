@@ -333,8 +333,8 @@ def build_datasets(
             
             if mode in ["sections", "qa_pairs"]:
                 # Record 1: Profile overview
-                prompt = f"What is the taxonometric profile of the sigil '{title}'?"
-                response = f"The sigil '{title}' has a Zipf average of {zipf_avg:.3f} and rarity position of {rarity_pos:.5f}."
+                prompt = f"What is the taxonometric profile of the document '{title}'?"
+                response = f"The document '{title}' has a Zipf average of {zipf_avg:.3f} and rarity position of {rarity_pos:.5f}."
                 if rare_terms:
                     response += f" Its rare terms include: {', '.join(rare_terms)}."
                 record1 = {
@@ -348,8 +348,8 @@ def build_datasets(
                 
                 # Record 2: Rare terms if available
                 if rare_terms:
-                    prompt2 = f"List the rare terms associated with the sigil '{title}'."
-                    response2 = f"The rare terms associated with the sigil '{title}' are: {', '.join(rare_terms)}."
+                    prompt2 = f"List the rare terms associated with the document '{title}'."
+                    response2 = f"The rare terms associated with the document '{title}' are: {', '.join(rare_terms)}."
                     record2 = {
                         "messages": [
                             {"role": "system", "content": system_prompt},

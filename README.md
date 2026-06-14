@@ -63,8 +63,8 @@ You can also optionally incorporate RLHF QA pairs (from `*-review.json` files) a
   --input-dir /path/to/markdown/files \
   --output-dir data \
   --mode sections \
-  --rlhf-dir /path/to/rlhf/sigil/instruction \
-  --taxonometry-dir /path/to/taxonometry/sigil
+  --rlhf-dir /path/to/rlhf/document/instruction \
+  --taxonometry-dir /path/to/taxonometry/profiles
 ```
 
 
@@ -128,14 +128,14 @@ When training is complete, fuse the LoRA adapters back into the base model to ou
 
 ### 5. Taxonometry Profiling
 
-Generate semantic complexity signatures of your sigils to calculate word frequency, part-of-speech distributions, and rare terms. This is powered by the decoupled `wonder_lib` package.
+Generate semantic complexity signatures of your documents to calculate word frequency, part-of-speech distributions, and rare terms. This is powered by the decoupled `wonder_lib` package.
 
 ```bash
 # Profile a single markdown file
-./paling.py profile -i /path/to/sigil.md -o data/taxonometry/sigil
+./paling.py profile -i /path/to/document.md -o data/taxonometry/profiles
 
 # Profile a whole directory of markdown files (using Meta-Llama-3-8B-Instruct to extract rare terms)
-./paling.py profile -i /path/to/sigils/dir -o data/taxonometry/sigil
+./paling.py profile -i /path/to/documents/dir -o data/taxonometry/profiles
 ```
 
 ---

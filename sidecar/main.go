@@ -32,6 +32,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -59,34 +60,18 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-// exponentialBackoff calculates network retry delays using a binary exponential 
-// backoff algorithm capped at 30 seconds, injecting 10% randomized jitter 
-// to prevent thundering herd phenomena against the control plane.
-func exponentialBackoff(attempt int) time.Duration {
-	base := 100 * time.Millisecond
-	cap := 30 * time.Second
-	
-	duration := float64(base) * float64(int(1)<<attempt)
-	if duration > float64(cap) {
-		duration = float64(cap)
-	}
-	
-	jitter := rand.Float64() * 0.1 * duration // 10% jitter
-	return time.Duration(duration + jitter)
-}
-
 func doWithRetries(operation func() error) error {
-	var err error
-	for i := 0; i < 8; i++ {
-		err = operation()
-		if err == nil {
-			return nil
-		}
-		sleepTime := exponentialBackoff(i)
-		log.Printf("Operation failed: %v. Retrying in %v...", err, sleepTime)
-		time.Sleep(sleepTime)
+	b := backoff.NewExponentialBackOff()
+	b.InitialInterval = 100 * time.Millisecond
+	b.MaxInterval = 30 * time.Second
+	b.RandomizationFactor = 0.1 // 10% jitter
+
+	notify := func(err error, d time.Duration) {
+		log.Printf("Operation failed: %v. Retrying in %v...", err, d)
 	}
-	return err
+
+	// Wrap with max retries to preserve the original 8-attempt behavior
+	return backoff.RetryNotify(operation, backoff.WithMaxRetries(b, 8), notify)
 }
 
 func registerWithDelightd() error {

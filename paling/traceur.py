@@ -1,3 +1,23 @@
+# ==============================================================================
+# Paling Traceur (Mechanistic Interpretability Engine)
+# ==============================================================================
+# This module implements near-real-time mechanistic interpretability tracking 
+# over the model's latent perimeter during active text generation.
+#
+# Core Architectural Features:
+# 1. Activation Hooking: Uses Anthropic's `transformer_lens` to deeply hook 
+#    into the model's residual streams and extract latent vector states at 
+#    specific layers (currently the final layer).
+# 2. Kalman Filter Trajectory: Treats the sequence of generated tokens as a 
+#    continuous trajectory through a high-dimensional latent space. It uses a 
+#    continuous Kalman filter over the latent vector to track trajectory momentum.
+# 3. Innovation Scoring: Calculates a mathematical deviation/innovation score
+#    (the L2 norm of the innovation vector `y`) to detect sudden shifts in 
+#    generation momentum (e.g., detecting "hallucination" vs. deliberate "lying").
+# 4. Recursive Tracing: Dumps comprehensive JSON blobs of the human text, the
+#    tracked deviation scores, and interpretability states for future recursive 
+#    QLoRA fine-tuning or SAE (Sparse Autoencoder) analysis via `sae_lens`.
+# ==============================================================================
 import json
 import logging
 import numpy as np

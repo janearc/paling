@@ -1,7 +1,10 @@
 import subprocess
 import sys
+import logging
 from pathlib import Path
 from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 def run_training(
     model: str,
@@ -47,17 +50,17 @@ def run_training(
     if extra_args:
         cmd.extend(extra_args)
 
-    print("=" * 60)
-    print("Starting MLX QLoRA Fine-tuning")
-    print(f"  Model:        {model}")
-    print(f"  Data Dir:     {data_dir}")
-    print(f"  Adapter Path: {adapter_path}")
-    print(f"  Iterations:   {iters}")
-    print(f"  Batch Size:   {batch_size}")
-    print(f"  Learning Rate:{learning_rate}")
-    print(f"  Type:         {fine_tune_type.upper()}")
-    print("=" * 60)
-    print(f"Running command: {' '.join(cmd)}\n")
+    logger.info("=" * 60)
+    logger.info("Starting MLX QLoRA Fine-tuning")
+    logger.info(f"  Model:        {model}")
+    logger.info(f"  Data Dir:     {data_dir}")
+    logger.info(f"  Adapter Path: {adapter_path}")
+    logger.info(f"  Iterations:   {iters}")
+    logger.info(f"  Batch Size:   {batch_size}")
+    logger.info(f"  Learning Rate:{learning_rate}")
+    logger.info(f"  Type:         {fine_tune_type.upper()}")
+    logger.info("=" * 60)
+    logger.info(f"Running command: {' '.join(cmd)}\n")
 
     # Start the training process and stream output to console
     try:
@@ -74,16 +77,16 @@ def run_training(
             if not line and process.poll() is not None:
                 break
             if line:
-                print(line, end="", flush=True)
+                sys.stdout.write(str(line)); sys.stdout.flush()
                 
         process.wait()
         return process.returncode
     except KeyboardInterrupt:
-        print("\nTraining interrupted by user.")
+        logger.info("\nTraining interrupted by user.")
         if 'process' in locals():
             process.terminate()
             process.wait()
         return 130
     except Exception as e:
-        print(f"Error running training process: {e}")
+        logger.info(f"Error running training process: {e}")
         return 1

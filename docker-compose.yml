@@ -1,0 +1,17 @@
+version: "3.8"
+services:
+  paling-sidecar:
+    build:
+      context: ./sidecar
+      dockerfile: Dockerfile
+    labels:
+      - "fleet.essential=true"
+      - "traefik.enable=true"
+      - "traefik.http.routers.paling.rule=Host(`paling.localhost`)"
+      - "traefik.http.services.paling.loadbalancer.server.port=9090"
+    restart: unless-stopped
+    networks:
+      - dev-fleet
+networks:
+  dev-fleet:
+    external: true

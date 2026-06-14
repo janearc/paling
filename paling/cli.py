@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 import argparse
+import logging
 import sys
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 # Ensure the parent directory is in python path to import our modules
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from paling.dataset import build_datasets, DEFAULT_SYSTEM_PROMPT
 from paling.painter import run_painter
@@ -233,7 +236,20 @@ def main():
         help="Score threshold (0-1) for saving an interaction as high-reward"
     )
 
-# Subcommand: profile
+    # Subcommand: serve
+    parser_serve = subparsers.add_parser(
+        "serve",
+        help="Run the paling API daemon",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser_serve.add_argument(
+        "--port",
+        type=int,
+        default=8090,
+        help="Port to run the daemon on"
+    )
+
+    # Subcommand: profile
     # Subcommand: checkpoint
     parser_chk = subparsers.add_parser(
         "checkpoint",
@@ -266,7 +282,7 @@ def main():
 
     parser_prof = subparsers.add_parser(
         "profile",
-        help="Generate taxonometric profile of sigils using Zipf average, part-of-speech complexity, and rare term extraction",
+        help="Generate taxonometric profile of documents using Zipf average, part-of-speech complexity, and rare term extraction",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser_prof.add_argument(
@@ -276,7 +292,7 @@ def main():
     )
     parser_prof.add_argument(
         "--output-dir", "-o",
-        default="data/taxonometry/sigil",
+        default="data/taxonometry/profiles",
         help="Directory where the generated taxonometry JSON profiles should be saved"
     )
     parser_prof.add_argument(
@@ -318,7 +334,7 @@ def main():
                 taxonometry_dir=args.taxonometry_dir
             )
         except Exception as e:
-            print(f"Error during preparation: {e}", file=sys.stderr)
+            logger.error(f"Error during preparation: {e}")
             sys.exit(1)
             
     elif args.command == "train":
@@ -342,7 +358,7 @@ def main():
         if adapter_path:
             p = Path(adapter_path)
             if not (p / "adapter_config.json").exists() and not (p / "adapters.safetensors").exists():
-                print(f"LoRA adapter files not found in '{adapter_path}'. Running base model only.")
+                logger.info(f"LoRA adapter files not found in '{adapter_path}'. Running base model only.")
                 adapter_path = None
                 
         run_interactive_chat(
@@ -375,11 +391,13 @@ def main():
             dryRun=args.dry_run,
         )
         if err:
-            print(f"Checkpoint failed: {err}", file=sys.stderr)
+            logger.error(f"Checkpoint failed: {err}")
             sys.exit(1)
-        print(f"Checkpoint created at {archive_path}")
+        logger.info(f"Checkpoint created at {archive_path}")
         sys.exit(0)
 
+    elif args.command == "profile":
+        input_path = Path(args.input)
         output_path = Path(args.output_dir)
         include_git = not args.no_git
         
@@ -399,7 +417,7 @@ def main():
                 fix_only=args.fix_only
             )
         else:
-            print(f"Error: Input path '{args.input}' does not exist or is neither a file nor a directory.", file=sys.stderr)
+            logger.error(f"Error: Input path '{args.input}' does not exist or is neither a file nor a directory.")
             sys.exit(1)
 
     elif args.command == "paint":
@@ -411,6 +429,11 @@ def main():
             num_interactions=args.steps,
             reward_threshold=args.reward_threshold,
         )
+        sys.exit(0)
+        
+    elif args.command == "serve":
+        from paling.daemon import serve
+        serve(port=args.port)
         sys.exit(0)
 
 if __name__ == "__main__":

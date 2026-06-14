@@ -1,7 +1,10 @@
 import time
+import logging
 from typing import Any, Optional
 import psutil
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 class Benchmark(BaseModel):
     label: str = "Benchmark"
@@ -34,13 +37,13 @@ class Benchmark(BaseModel):
         )
         mem_info = self.proc.memory_info()
 
-        print(f"\n📊 {self.label}:")
-        print(f"- Elapsed wall time: {elapsed:.2f}s")
-        print(f"- CPU time (user+system): {cpu_time:.2f}s")
-        print(f"- Memory usage: {mem_info.rss / (1024 ** 2):.2f} MB")
+        logger.info(f"\n📊 {self.label}:")
+        logger.info(f"- Elapsed wall time: {elapsed:.2f}s")
+        logger.info(f"- CPU time (user+system): {cpu_time:.2f}s")
+        logger.info(f"- Memory usage: {mem_info.rss / (1024 ** 2):.2f} MB")
 
         if self.output_tokens > 0:
-            print(f"- Token throughput: {self.token_throughput:.2f} tokens/sec")
-            print(
+            logger.info(f"- Token throughput: {self.token_throughput:.2f} tokens/sec")
+            logger.info(
                 f"- Input: {self.input_tokens} tokens, Output: {self.output_tokens} tokens"
             )

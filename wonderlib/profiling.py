@@ -23,9 +23,9 @@ try:
     nlp = spacy.load("en_core_web_sm")
 except Exception as e:
     nlp = None
-    print(f"⚠️ spaCy en_core_web_sm failed to load: {e}")
+    logger.info(f"⚠️ spaCy en_core_web_sm failed to load: {e}")
 
-class SigilProfile(BaseModel):
+class TaxonometryProfile(BaseModel):
     title: str
     zipf_avg: float
     zipf_cluster: List[int]
@@ -41,7 +41,7 @@ class SigilProfile(BaseModel):
         None, description="The source filename of the signature (for tracking)."
     )
     git_stats: Optional[GitStats] = Field(
-        None, description="git statistics for the sigil being profiled."
+        None, description="git statistics for the document being profiled."
     )
 
     @property
@@ -60,22 +60,22 @@ class SigilProfile(BaseModel):
     def zipf_low(self) -> int:
         return self.zipf_cluster[2]
 
-class SigilProfileCorpus(BaseModel):
-    signatures: List[SigilProfile] = Field(
-        ..., description="a full set of sigil taxonometric signatures"
+class TaxonometryCorpus(BaseModel):
+    signatures: List[TaxonometryProfile] = Field(
+        ..., description="a full set of document taxonometric signatures"
     )
 
     @property
     def length(self) -> int:
         return len(self.signatures)
 
-    def pop(self) -> SigilProfile:
+    def pop(self) -> TaxonometryProfile:
         return self.signatures.pop(0)
 
-    def push(self, signature: SigilProfile):
+    def push(self, signature: TaxonometryProfile):
         self.signatures.append(signature)
 
-    def no_rare_terms(self) -> List[SigilProfile]:
+    def no_rare_terms(self) -> List[TaxonometryProfile]:
         return [sig for sig in self.signatures if sig.rare_term_count == 0]
 
     def no_rare_term_filenames(self) -> List[str]:
@@ -229,16 +229,16 @@ class RarityAnalyzer:
 
         return terms
 
-def profile_sigil(
+def profile_document(
     text: str,
     title: Optional[str] = None,
     model: Optional[Any] = None,
     tokenizer: Optional[Any] = None,
     token_estimator: Optional[Callable[[str], int]] = None,
     local_logger: Optional[Any] = None
-) -> SigilProfile:
+) -> TaxonometryProfile:
     """
-    Profiles a markdown string and returns a SigilProfile taxonometry object.
+    Profiles a markdown string and returns a TaxonometryProfile taxonometry object.
     """
     log = local_logger or logger
     
@@ -268,7 +268,7 @@ def profile_sigil(
 
     analyzer.benchmark.stop()
 
-    return SigilProfile(
+    return TaxonometryProfile(
         title=title or "unknown",
         zipf_avg=zipf_avg,
         zipf_cluster=zipf_cluster,
@@ -277,7 +277,7 @@ def profile_sigil(
         benchmark=analyzer.benchmark,
     )
 
-def DataToSigilProfileCorpus(data: str) -> SigilProfileCorpus:
+def DataToTaxonometryCorpus(data: str) -> TaxonometryCorpus:
     root = Path(data)
     files = root.glob("**/*-taxonometry.json")
     signatures = []
@@ -286,10 +286,10 @@ def DataToSigilProfileCorpus(data: str) -> SigilProfileCorpus:
         try:
             with open(file, "r") as f:
                 raw_json = json.load(f)
-                signature = SigilProfile(**raw_json)
+                signature = TaxonometryProfile(**raw_json)
                 signature.filename = str(file)
                 signatures.append(signature)
         except Exception as e:
             raise RuntimeError(f"Failed to load {file}: {e}")
 
-    return SigilProfileCorpus(signatures=signatures)
+    return TaxonometryCorpus(signatures=signatures)

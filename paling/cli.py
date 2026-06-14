@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 # Ensure the parent directory is in python path to import our modules
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from paling.dataset import build_datasets, DEFAULT_SYSTEM_PROMPT
 from paling.painter import run_painter
@@ -242,7 +242,7 @@ def main():
     parser_serve.add_argument(
         "--port",
         type=int,
-        default=8080,
+        default=8090,
         help="Port to run the daemon on"
     )
 

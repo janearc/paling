@@ -85,7 +85,7 @@ def train_bento(bento_id: str):
     bentos_state[bento_id] = BentoState.TRAINING
     return {"bento_id": bento_id, "status": "enqueued for train"}
 
-def serve(port: int = 8080):
+def serve(port: int = 8090):
     import uvicorn
     import subprocess
     

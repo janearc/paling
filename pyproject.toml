@@ -40,3 +40,6 @@ packages = [
     { include = "paling" },
     { include = "wonderlib" }
 ]
+
+[tool.uv]
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]

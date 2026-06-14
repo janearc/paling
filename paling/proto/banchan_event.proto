@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package paling.events;
+
+message BanchanEvent {
+  string bento_id = 1;
+  string banchan_name = 2;
+  
+  enum State {
+    NOT_STARTED = 0;
+    IN_PROGRESS = 1;
+    PARTIAL = 2;
+    NEEDS_MASSAGE = 3;
+    DONE = 4;
+    FAILED = 5;
+  }
+  
+  State state = 3;
+  int64 timestamp = 4;
+  
+  // Optional field reserved for future external tool executor events
+  // See Milestone: paling-acceptance-criteria
+  string tool_event = 5;
+  
+  // Optional error message if state is FAILED
+  string error_message = 6;
+}

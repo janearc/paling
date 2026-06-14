@@ -233,7 +233,20 @@ def main():
         help="Score threshold (0-1) for saving an interaction as high-reward"
     )
 
-# Subcommand: profile
+    # Subcommand: serve
+    parser_serve = subparsers.add_parser(
+        "serve",
+        help="Run the paling API daemon",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser_serve.add_argument(
+        "--port",
+        type=int,
+        default=8080,
+        help="Port to run the daemon on"
+    )
+
+    # Subcommand: profile
     # Subcommand: checkpoint
     parser_chk = subparsers.add_parser(
         "checkpoint",
@@ -380,6 +393,8 @@ def main():
         print(f"Checkpoint created at {archive_path}")
         sys.exit(0)
 
+    elif args.command == "profile":
+        input_path = Path(args.input)
         output_path = Path(args.output_dir)
         include_git = not args.no_git
         
@@ -411,6 +426,11 @@ def main():
             num_interactions=args.steps,
             reward_threshold=args.reward_threshold,
         )
+        sys.exit(0)
+        
+    elif args.command == "serve":
+        from paling.daemon import serve
+        serve(port=args.port)
         sys.exit(0)
 
 if __name__ == "__main__":

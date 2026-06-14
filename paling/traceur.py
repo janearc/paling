@@ -1,7 +1,10 @@
 import json
+import logging
 import numpy as np
 import time
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 try:
     from transformer_lens import HookedTransformer
 except ImportError:
@@ -42,7 +45,7 @@ class Traceur:
                 else:
                     self.model = model
             except Exception as e:
-                print(f"Warning: Failed to auto-wrap model with HookedTransformer: {e}")
+                logger.warning(f"Failed to auto-wrap model with HookedTransformer: {e}")
                 self.model = model
 
     def hook_activations(self, text: str) -> np.ndarray:
@@ -65,11 +68,7 @@ class Traceur:
             latent_vector = resid_post[0, -1, :].detach().cpu().numpy()
             return latent_vector
         else:
-            # Fallback mock for demonstration if HookedTransformer isn't fully loaded
-            # Generate a pseudo-random latent vector based on the text hash
-            print("Warning: HookedTransformer not attached, returning mock latent vector.")
-            np.random.seed(hash(text) % (2**32))
-            return np.random.randn(768)
+            raise RuntimeError("HookedTransformer is required but not attached to the model. Cannot hook activations.")
 
     def update_trajectory(self, latent_vector: np.ndarray) -> float:
         """

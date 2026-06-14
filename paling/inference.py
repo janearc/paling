@@ -1,3 +1,22 @@
+# ==============================================================================
+# Paling Inference Engine (`paling chat`)
+# ==============================================================================
+# This module provides a unified interactive chat session layer, abstracting away
+# the complexity of running diverse ML weights on Apple Silicon (Metal API).
+#
+# Core Architectural Features:
+# 1. Dual-Backend Execution: Dynamically routes inference to either:
+#    - `mlx_lm` (Native MLX): Used for natively quantized MLX weights and 
+#      runtime LoRA adapter injection.
+#    - `llama-cpp-python` (GGUF): Used for executing pre-fused GGUF binaries 
+#      with hardware Metal acceleration (requires `-DLLAMA_METAL=on`).
+# 2. Dynamic Format Detection: Automatically inspects the provided model path
+#    to detect `.gguf` binaries versus standard HuggingFace/MLX snapshot directories.
+# 3. Chat History & Templating: Manages conversation context state across turns
+#    and strictly enforces tokenizer chat templates for safety and alignment.
+# 4. Token Streaming: Preserves terminal UX by streaming tokens in real-time
+#    using direct `sys.stdout.write` instead of fully buffering generation.
+# ==============================================================================
 import sys
 import logging
 import traceback

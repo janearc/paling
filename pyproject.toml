@@ -1,0 +1,42 @@
+[project]
+name = "paling"
+version = "0.1.0"
+description = "QLoRA Fine-tuning and Taxonometry Profiling CLI for Apple Silicon"
+authors = [
+    { name = "Jane Arc" }
+]
+requires-python = ">=3.12,<3.15"
+dependencies = [
+    "mlx-lm>=0.31.3",
+    "spacy>=3.8.0",
+    "markdown>=3.10.0",
+    "beautifulsoup4>=4.15.0",
+    "wordfreq>=3.1.0",
+    "gitpython>=3.1.50",
+    "psutil>=7.2.2",
+    "torch>=2.12.0",
+    "pydantic>=2.13.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>8.0.0",
+    "click>=8.1.0"
+]
+gguf = [
+    "llama-cpp-python>=0.2.0"
+]
+
+[project.scripts]
+paling = "paling:main"
+
+[build-system]
+requires = ["poetry-core>=2.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+requires-poetry = ">=2.0.0"
+packages = [
+    { include = "paling" },
+    { include = "wonderlib" }
+]

@@ -1,3 +1,22 @@
+# ==============================================================================
+# Paling Orchestration Daemon (`paling serve`)
+# ==============================================================================
+# This module serves as the primary orchestration plane for the Paling ecosystem.
+# Because Paling relies on MLX to execute QLoRA training and inference directly
+# on Apple Silicon (Metal API), this daemon intentionally runs bare-metal rather
+# than inside a container. It acts as the bridge between the containerized fleet
+# and the local MLX hardware.
+#
+# Core Responsibilities:
+# 1. State Machines: Manages the lifecycle of Bentos (entire projects) and
+#    Banchans (discrete processing steps like Lexical Cartography or Training).
+# 2. Asynchronous Execution: API endpoints queue operations into a thread pool
+#    so HTTP requests remain unblocked during multi-hour fine-tuning runs.
+# 3. Distributed Observability: Emits `BanchanLifecycleEvent` protobufs
+#    via Kafka, allowing the broader fleet to track execution via trace_ids.
+# 4. Fleet Integration: Provides `/health` and `/metrics` for Traefik routing
+#    and the Go sidecar container to scrape.
+# ==============================================================================
 import asyncio
 import logging
 from fastapi import FastAPI, HTTPException

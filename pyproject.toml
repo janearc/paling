@@ -39,15 +39,11 @@ gguf = [
 paling = "paling.cli:main"
 
 [build-system]
-requires = ["poetry-core>=2.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.poetry]
-requires-poetry = ">=2.0.0"
-packages = [
-    { include = "paling" },
-    { include = "wonderlib" }
-]
+[tool.hatch.build.targets.wheel]
+packages = ["paling", "wonderlib"]
 
 [tool.uv]
 environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
@@ -56,5 +52,5 @@ environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "T201"]  # T201 = flake8-print (bans print statements)
+select = ["E", "F", "T201", "N"]  # N = pep8-naming (catches single-letter uppercase variables)
 ignore = []

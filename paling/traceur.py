@@ -40,10 +40,10 @@ class Traceur:
         self.state_dim: Optional[int] = None
         
         # Kalman filter state
-        self.x: Optional[np.ndarray] = None
-        self.P: Optional[np.ndarray] = None
-        self.Q: float = 0.01  # Process noise
-        self.R: float = 0.1   # Measurement noise
+        self.state_estimate: Optional[np.ndarray] = None
+        self.error_cov: Optional[np.ndarray] = None
+        self.process_noise: float = 0.01
+        self.measurement_noise: float = 0.1
         
         # Tracking history
         self.trace: List[Dict[str, Any]] = []
@@ -98,25 +98,25 @@ class Traceur:
         dim = latent_vector.shape[0]
         
         # Initialize Kalman filter state if first step
-        if self.x is None or self.state_dim != dim:
+        if self.state_estimate is None or self.state_dim != dim:
             self.state_dim = dim
-            self.x = np.zeros(dim)
-            self.P = np.ones(dim)
+            self.state_estimate = np.zeros(dim)
+            self.error_cov = np.ones(dim)
             
         # Prediction step
-        x_pred = self.x
-        P_pred = self.P + self.Q
+        x_pred = self.state_estimate
+        P_pred = self.error_cov + self.process_noise
         
         # Update step
-        y = latent_vector - x_pred  # Innovation / deviation
-        S = P_pred + self.R
-        K = P_pred / S
+        innovation = latent_vector - x_pred  # Innovation / deviation
+        innovation_cov = P_pred + self.measurement_noise
+        kalman_gain = P_pred / innovation_cov
         
-        self.x = x_pred + K * y
-        self.P = (1 - K) * P_pred
+        self.state_estimate = x_pred + kalman_gain * innovation
+        self.error_cov = (1 - kalman_gain) * P_pred
         
         # Calculate innovation score (L2 norm of the innovation vector)
-        innovation_score = float(np.linalg.norm(y))
+        innovation_score = float(np.linalg.norm(innovation))
         
         return innovation_score
 

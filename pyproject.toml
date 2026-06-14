@@ -35,7 +35,7 @@ gguf = [
 ]
 
 [project.scripts]
-paling = "paling:main"
+paling = "paling.cli:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0"]

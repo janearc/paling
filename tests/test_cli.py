@@ -12,8 +12,8 @@ import importlib.util
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
-# Load paling.py directly bypassing the directory namespace collision
-spec = importlib.util.spec_from_file_location("paling_cli_script", str(project_root / "paling.py"))
+# Load paling/cli.py directly bypassing the directory namespace collision
+spec = importlib.util.spec_from_file_location("paling_cli_script", str(project_root / "paling/cli.py"))
 paling_cli_script = importlib.util.module_from_spec(spec)
 sys.modules["paling_cli_script"] = paling_cli_script
 spec.loader.exec_module(paling_cli_script)

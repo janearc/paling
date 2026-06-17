@@ -4,3 +4,8 @@ data/
 *.gguf
 server.log
 ruff_out.txt
+
+# generated protobuf bindings — regenerate with scripts/gen_proto.sh (see paling/proto/README.md)
+*_pb2.py
+*_pb2.pyi
+*_pb2_grpc.py

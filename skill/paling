@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# paling: thin wrapper over the paling daemon API. every bento operation is an
+# API call -- nothing here hand-places files. this is the wrapper delightd
+# surfaces as the agent skill; an agent (or a human) drives paling through it
+# instead of mucking in the shell/filesystem.
+set -euo pipefail
+
+base="${PALING_API:-http://localhost:8090}"
+
+usage() {
+  cat >&2 <<'EOF'
+usage:
+  paling create-bento [name] [archetype]   create a bento (uuid name if omitted)
+  paling ingest <bento> <source_path>      ingest a markdown corpus into a bento
+  paling prepare <bento>                    enqueue dataset preparation
+  paling train <bento>                      enqueue training
+  paling status <bento>                     report bento state
+EOF
+  exit 2
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  create-bento)
+    body="{}"
+    [ $# -ge 1 ] && body="{\"name\":\"$1\"${2:+,\"archetype\":\"$2\"}}"
+    curl -fsS -X POST "$base/bento" -H 'content-type: application/json' -d "$body"
+    ;;
+  ingest)
+    [ $# -eq 2 ] || usage
+    curl -fsS -X POST "$base/bento/$1/corpus" -H 'content-type: application/json' \
+      -d "{\"source_path\":\"$2\"}"
+    ;;
+  prepare) [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/prepare" ;;
+  train)   [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/train" ;;
+  status)  [ $# -eq 1 ] || usage; curl -fsS "$base/bento/$1/status" ;;
+  *) usage ;;
+esac
+echo

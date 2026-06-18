@@ -199,8 +199,8 @@ def profile_bento(bento_id: str):
     if not bento_path.is_dir():
         raise HTTPException(status_code=404, detail=f"bento '{bento_id}' not found")
     report = bento.profile_bento(bento_path)
-    if not report.get("profiled"):
-        raise HTTPException(status_code=409, detail=report.get("issues"))
+    if not report.profiled:
+        raise HTTPException(status_code=409, detail=report.issues)
     producer.emit(bento_id, "profile", BanchanState.IN_PROGRESS)
     return report
 

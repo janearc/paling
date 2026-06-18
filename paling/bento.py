@@ -5,9 +5,76 @@
 # drives, instead of anyone hand-placing files.
 
 import json
+import logging
 import shutil
 import uuid
 from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
+
+
+# --- stage report structs -----------------------------------------------------
+# the pipeline stages return typed reports (not bare dicts) so callers -- the
+# daemon endpoints, the CLI, downstream stages -- get a stable, self-describing
+# shape. FastAPI serializes these to the same JSON the skill wrapper prints.
+
+class VerifyReport(BaseModel):
+    # result of the stage-1 verify gate (see verify_bento).
+    bento_id: str
+    valid: bool
+    issues: List[str] = []
+    corpus_files: int = 0
+    corpus_bytes: int = 0
+    archetype: Optional[str] = None
+    routing: Optional[Dict[str, Any]] = None
+
+
+class TaxonometrySummary(BaseModel):
+    # corpus-level rollup of the stage-2 taxonometry.
+    #
+    # "taxonometry" is a coined term (Max's): the lexical/statistical *signature*
+    # of a document's vocabulary -- zipf-frequency rarity buckets + POS-based
+    # rarity -- not a taxonomy. See wonderlib/profiling.py for how each
+    # per-document signature is computed.
+    documents: int = 0
+    rare_terms_total: int = 0
+    rare_terms_unique: int = 0
+    zipf_avg: float = 0.0
+    zipf_cluster: List[int] = [0, 0, 0]
+    rarity_pos_avg: float = 0.0
+    thin_documents: List[str] = []
+
+
+class ProfileReport(BaseModel):
+    # result of stage-2 profiling. the summary fields are flattened in so the
+    # skill wrapper / API shape stays flat and stable.
+    bento_id: str
+    profiled: bool
+    issues: List[str] = []
+    documents: int = 0
+    rare_terms_total: int = 0
+    rare_terms_unique: int = 0
+    zipf_avg: float = 0.0
+    zipf_cluster: List[int] = [0, 0, 0]
+    rarity_pos_avg: float = 0.0
+    thin_documents: List[str] = []
+
+
+def _safe_write_json(out_path, data):
+    # filesystem writes fail sometimes (perms, full disk, races). persistence of
+    # a stage report is a side effect, not the result the caller needs, so we log
+    # and carry on rather than letting a write error take down the request.
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(data, indent=2))
+        return True
+    except OSError as e:
+        logger.warning("failed to write %s (non-fatal): %s", out_path, e)
+        return False
+
 
 # the canonical bento sub-structure (mirrors `paling create bento`).
 _BENTO_DIRS = (
@@ -62,13 +129,14 @@ def ingest_corpus(bento_path, source_path):
     return len(files)
 
 
-def verify_bento(bento_path):
+def verify_bento(bento_path) -> VerifyReport:
     # walk a bento and report whether it looks processable -- without doing any
     # processing. this is the pipeline's preflight gate: a bento needs a corpus
     # and a valid schema before anything downstream (extract/generate/train) runs.
     path = Path(bento_path).expanduser().resolve()
     if not path.is_dir():
-        return {"bento_id": path.name, "valid": False, "issues": [f"bento dir not found: {path}"]}
+        return VerifyReport(bento_id=path.name, valid=False,
+                            issues=[f"bento dir not found: {path}"])
 
     issues = []
     missing = [d for d in _BENTO_DIRS if not (path / d).is_dir()]
@@ -96,27 +164,27 @@ def verify_bento(bento_path):
     else:
         issues.append("missing schema/schema.json")
 
-    return {
-        "bento_id": path.name,
-        "valid": not issues,
-        "corpus_files": len(md_files),
-        "corpus_bytes": sum(p.stat().st_size for p in md_files),
-        "archetype": archetype,
-        "routing": routing,
-        "issues": issues,
-    }
+    return VerifyReport(
+        bento_id=path.name,
+        valid=not issues,
+        corpus_files=len(md_files),
+        corpus_bytes=sum(p.stat().st_size for p in md_files),
+        archetype=archetype,
+        routing=routing,
+        issues=issues,
+    )
 
 
-def write_preflight(bento_path, report):
+def write_preflight(bento_path, report: VerifyReport):
     # persist a verify report to the bento's preflight/ dir so the gate result is
-    # on disk (stage 1 of the pipeline writes here before stage 2 runs).
+    # on disk (stage 1 of the pipeline writes here before stage 2 runs). the write
+    # is best-effort -- see _safe_write_json.
     out = Path(bento_path).expanduser().resolve() / "preflight" / "preflight.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(report, indent=2))
+    _safe_write_json(out, report.model_dump())
     return out
 
 
-def _summarize_taxonometry(corpus):
+def _summarize_taxonometry(corpus) -> TaxonometrySummary:
     # roll per-document signatures up into the corpus-level, internal-to-paling
     # metrics. the load-bearing one is thin_documents: documents with no rare
     # terms carry no distinctive character vocabulary -- they're the flat, generic
@@ -132,18 +200,18 @@ def _summarize_taxonometry(corpus):
         all_terms.extend(s.rare_terms)
     thin = sorted(Path(f).name.replace("-taxonometry.json", "")
                   for f in corpus.no_rare_term_filenames())
-    return {
-        "documents": n,
-        "rare_terms_total": len(all_terms),
-        "rare_terms_unique": len({t.lower() for t in all_terms}),
-        "zipf_avg": round(sum(s.zipf_avg for s in sigs) / n, 4) if n else 0.0,
-        "zipf_cluster": cluster,
-        "rarity_pos_avg": round(sum(s.rarity_pos for s in sigs) / n, 4) if n else 0.0,
-        "thin_documents": thin,
-    }
+    return TaxonometrySummary(
+        documents=n,
+        rare_terms_total=len(all_terms),
+        rare_terms_unique=len({t.lower() for t in all_terms}),
+        zipf_avg=round(sum(s.zipf_avg for s in sigs) / n, 4) if n else 0.0,
+        zipf_cluster=cluster,
+        rarity_pos_avg=round(sum(s.rarity_pos for s in sigs) / n, 4) if n else 0.0,
+        thin_documents=thin,
+    )
 
 
-def profile_bento(bento_path):
+def profile_bento(bento_path) -> ProfileReport:
     # pipeline stage 2: profile the corpus into per-document taxonometry
     # signatures (lexical rarity metrics) plus a corpus-level summary, written to
     # taxonometry/. gated on the stage-1 verify gate -- a bento that doesn't look
@@ -151,12 +219,12 @@ def profile_bento(bento_path):
     # heuristics); no MLX load, so it's fast and deterministic.
     path = Path(bento_path).expanduser().resolve()
     report = verify_bento(path)
-    if not report["valid"]:
-        return {
-            "bento_id": path.name,
-            "profiled": False,
-            "issues": ["verify gate failed; fix the bento and re-verify"] + report["issues"],
-        }
+    if not report.valid:
+        return ProfileReport(
+            bento_id=path.name,
+            profiled=False,
+            issues=["verify gate failed; fix the bento and re-verify"] + report.issues,
+        )
 
     # lazy import: profiling pulls in spacy/torch/wordfreq, which the rest of the
     # daemon (create/ingest/verify) has no reason to load.
@@ -185,6 +253,6 @@ def profile_bento(bento_path):
 
     corpus = DataToTaxonometryCorpus(str(sig_dir))
     summary = _summarize_taxonometry(corpus)
-    (tax_dir / "corpus.json").write_text(json.dumps(summary, indent=2))
+    _safe_write_json(tax_dir / "corpus.json", summary.model_dump())
 
-    return {"bento_id": path.name, "profiled": True, **summary}
+    return ProfileReport(bento_id=path.name, profiled=True, **summary.model_dump())

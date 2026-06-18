@@ -1,6 +1,6 @@
 from typing import List
 from datetime import datetime
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field
 import git
 
 class GitCommitEntry(BaseModel):
@@ -8,20 +8,10 @@ class GitCommitEntry(BaseModel):
     date: datetime = Field(..., description="The datetime of the commit")
     additions: int = Field(..., description="Number of additions in this commit")
     deletions: int = Field(..., description="Number of deletions in this commit")
-
-    model_config = ConfigDict(
-        json_encoders={datetime: lambda v: v.isoformat()}
-    )
-
 class GitStats(BaseModel):
     last_modified_commit: str = Field(..., description="Hash of the last modifying commit")
     commit_count: int = Field(..., description="Number of commits affecting this file")
     commit_history: List[GitCommitEntry] = Field(..., description="Chronological commit history for the file")
-
-    model_config = ConfigDict(
-        json_encoders={datetime: lambda v: v.isoformat()}
-    )
-
     def total_additions(self) -> int:
         return sum(commit.additions for commit in self.commit_history)
 

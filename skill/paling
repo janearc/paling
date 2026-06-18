@@ -13,6 +13,7 @@ usage:
   paling create-bento [name] [archetype]   create a bento (uuid name if omitted)
   paling ingest <bento> <source_path>      ingest a markdown corpus into a bento
   paling verify <bento>                     check a bento is processable (preflight)
+  paling profile <bento>                    profile the corpus -> taxonometry metrics
   paling prepare <bento>                    enqueue dataset preparation
   paling train <bento>                      enqueue training
   paling status <bento>                     report bento state
@@ -33,6 +34,7 @@ case "$cmd" in
       -d "{\"source_path\":\"$2\"}"
     ;;
   verify)  [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/verify" ;;
+  profile) [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/profile" ;;
   prepare) [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/prepare" ;;
   train)   [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/train" ;;
   status)  [ $# -eq 1 ] || usage; curl -fsS "$base/bento/$1/status" ;;

@@ -114,3 +114,77 @@ def write_preflight(bento_path, report):
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=2))
     return out
+
+
+def _summarize_taxonometry(corpus):
+    # roll per-document signatures up into the corpus-level, internal-to-paling
+    # metrics. the load-bearing one is thin_documents: documents with no rare
+    # terms carry no distinctive character vocabulary -- they're the flat, generic
+    # inputs that won't yield character signal downstream (the "thin and flat"
+    # smell), so the pipeline surfaces them here before generation wastes effort.
+    sigs = corpus.signatures
+    n = len(sigs)
+    cluster = [0, 0, 0]  # summed zipf buckets: high-rarity, medium, low
+    all_terms = []
+    for s in sigs:
+        for i in range(3):
+            cluster[i] += s.zipf_cluster[i]
+        all_terms.extend(s.rare_terms)
+    thin = sorted(Path(f).name.replace("-taxonometry.json", "")
+                  for f in corpus.no_rare_term_filenames())
+    return {
+        "documents": n,
+        "rare_terms_total": len(all_terms),
+        "rare_terms_unique": len({t.lower() for t in all_terms}),
+        "zipf_avg": round(sum(s.zipf_avg for s in sigs) / n, 4) if n else 0.0,
+        "zipf_cluster": cluster,
+        "rarity_pos_avg": round(sum(s.rarity_pos for s in sigs) / n, 4) if n else 0.0,
+        "thin_documents": thin,
+    }
+
+
+def profile_bento(bento_path):
+    # pipeline stage 2: profile the corpus into per-document taxonometry
+    # signatures (lexical rarity metrics) plus a corpus-level summary, written to
+    # taxonometry/. gated on the stage-1 verify gate -- a bento that doesn't look
+    # processable isn't worth profiling. runs model-free (lexical zipf/POS
+    # heuristics); no MLX load, so it's fast and deterministic.
+    path = Path(bento_path).expanduser().resolve()
+    report = verify_bento(path)
+    if not report["valid"]:
+        return {
+            "bento_id": path.name,
+            "profiled": False,
+            "issues": ["verify gate failed; fix the bento and re-verify"] + report["issues"],
+        }
+
+    # lazy import: profiling pulls in spacy/torch/wordfreq, which the rest of the
+    # daemon (create/ingest/verify) has no reason to load.
+    from paling.profile_runner import profile_single_file
+    from wonderlib.profiling import DataToTaxonometryCorpus
+
+    raw = path / "raw_data"
+    tax_dir = path / "taxonometry"
+    # this run's signatures go in a dedicated subdir we own, mirroring raw_data's
+    # tree. two reasons: (1) files that share a stem across raw_data subdirs would
+    # otherwise clobber each other (flat {stem}-taxonometry.json names), and (2)
+    # the corpus rollup globs recursively, so aggregating from a clean dir we just
+    # wrote keeps any pre-existing hand-curated taxonometry (e.g. sigil/) out of
+    # the metrics. we rebuild it from scratch each run.
+    sig_dir = tax_dir / "signatures"
+    if sig_dir.exists():
+        shutil.rmtree(sig_dir)
+    sig_dir.mkdir(parents=True, exist_ok=True)
+
+    md_files = sorted(p for p in raw.rglob("*.md") if p.is_file())
+    for f in md_files:
+        # include_git=False: raw_data is a copy outside any git tree, so per-file
+        # git stats would only produce noise.
+        out_dir = sig_dir / f.relative_to(raw).parent
+        profile_single_file(f, out_dir, model_path=None, include_git=False)
+
+    corpus = DataToTaxonometryCorpus(str(sig_dir))
+    summary = _summarize_taxonometry(corpus)
+    (tax_dir / "corpus.json").write_text(json.dumps(summary, indent=2))
+
+    return {"bento_id": path.name, "profiled": True, **summary}

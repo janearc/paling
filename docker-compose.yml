@@ -12,6 +12,20 @@ services:
     restart: unless-stopped
     networks:
       - dev-fleet
+
+  paling-munge:
+    build:
+      context: .
+      dockerfile: Dockerfile.munge
+    labels:
+      - "fleet.essential=true"
+    user: "502:20"
+    volumes:
+      - /opt/paling:/opt/paling
+    restart: unless-stopped
+    networks:
+      - dev-fleet
+
 networks:
   dev-fleet:
     external: true

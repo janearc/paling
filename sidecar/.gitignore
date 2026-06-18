@@ -1,0 +1,3 @@
+# generated protobuf bindings — never committed; run `task generate` (buf) to
+# produce them from the vendored proto/ (sources: kafka-svc + paling/proto).
+gen/

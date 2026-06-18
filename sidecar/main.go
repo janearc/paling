@@ -32,10 +32,114 @@ import (
 	"syscall"
 	"time"
 
+	"strings"
+
 	"github.com/cenkalti/backoff/v4"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"paling-sidecar/emit"
+	observabilityv1 "paling-sidecar/gen/go/observability/v1"
+	palingeventsv1 "paling-sidecar/gen/go/paling/events/v1"
+	palingproto "paling-sidecar/proto"
 )
+
+const (
+	topicObservability = "observability.events"
+	topicPaling        = "paling.events"
+	subjectHeartbeat   = "observability.v1.ServiceHealthHeartbeat"
+	subjectBanchan     = "paling.events.v1.BanchanLifecycleEvent"
+)
+
+var startTime = time.Now()
+
+func getenv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// startHeartbeat emits an observability.v1.ServiceHealthHeartbeat on a ticker.
+// Best-effort: a publish failure is logged, never fatal.
+func startHeartbeat(ctx context.Context, pub *emit.Publisher) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			hb := &observabilityv1.ServiceHealthHeartbeat{
+				ServiceName:        "paling",
+				CurrentState:       observabilityv1.HealthState_HEALTH_STATE_GREEN,
+				UptimeSeconds:      uint32(time.Since(startTime).Seconds()),
+				InternalLoadMetric: 0,
+				Timestamp:          timestamppb.Now(),
+				IdempotencyKey:     fmt.Sprintf("paling-hb-%d", time.Now().UnixNano()),
+			}
+			if err := pub.Publish(ctx, topicObservability, subjectHeartbeat, palingproto.ObservabilitySchema, "paling", hb); err != nil {
+				log.Printf("heartbeat emit failed: %v", err)
+			}
+		}
+	}
+}
+
+// emitIntake is the HTTP endpoint paling's bare-metal daemon POSTs domain events
+// to. The sidecar owns the protobuf/Schema-Registry encoding, so Python never
+// touches Kafka. A nil publisher accepts and drops (best-effort).
+func emitIntake(ctx context.Context, pub *emit.Publisher) http.HandlerFunc {
+	type req struct {
+		EventID     string `json:"event_id"`
+		TraceID     string `json:"trace_id"`
+		BentoID     string `json:"bento_id"`
+		BanchanName string `json:"banchan_name"`
+		State       string `json:"state"`
+		ErrorMsg    string `json:"error_message"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		var in req
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		ev := &palingeventsv1.BanchanLifecycleEvent{
+			EventId:      in.EventID,
+			TraceId:      in.TraceID,
+			OccurredAt:   timestamppb.Now(),
+			BentoId:      in.BentoID,
+			BanchanName:  in.BanchanName,
+			State:        banchanState(in.State),
+			ErrorMessage: in.ErrorMsg,
+		}
+		if err := pub.Publish(ctx, topicPaling, subjectBanchan, palingproto.BanchanSchema, in.BentoID, ev); err != nil {
+			log.Printf("banchan emit failed: %v", err)
+			http.Error(w, "emit failed", http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}
+}
+
+func banchanState(s string) palingeventsv1.BanchanState {
+	switch strings.ToUpper(s) {
+	case "QUEUED", "NOT_STARTED":
+		return palingeventsv1.BanchanState_BANCHAN_STATE_QUEUED
+	case "IN_PROGRESS":
+		return palingeventsv1.BanchanState_BANCHAN_STATE_IN_PROGRESS
+	case "PARTIAL":
+		return palingeventsv1.BanchanState_BANCHAN_STATE_PARTIAL
+	case "NEEDS_MASSAGE":
+		return palingeventsv1.BanchanState_BANCHAN_STATE_NEEDS_MASSAGE
+	case "DONE", "COMPLETED":
+		return palingeventsv1.BanchanState_BANCHAN_STATE_COMPLETED
+	case "FAILED":
+		return palingeventsv1.BanchanState_BANCHAN_STATE_FAILED
+	default:
+		return palingeventsv1.BanchanState_BANCHAN_STATE_UNSPECIFIED
+	}
+}
 
 var (
 	errorHistogram = prometheus.NewHistogram(prometheus.HistogramOpts{
@@ -144,6 +248,22 @@ func main() {
 
 	// Polling loop
 	go pollPaling()
+
+	// Kafka emission (best-effort): the sidecar is paling's only producer, so
+	// no Python touches Kafka/Schema-Registry/protobuf. A failure here disables
+	// emission but never stops the sidecar.
+	emitCtx, emitCancel := context.WithCancel(context.Background())
+	defer emitCancel()
+	var publisher *emit.Publisher
+	if pub, err := emit.New(emitCtx, strings.Split(getenv("KAFKA_BROKERS", "kafka:9092"), ","), getenv("SCHEMA_REGISTRY_URL", "http://schema-registry:8081")); err != nil {
+		log.Printf("Kafka emission disabled: %v", err)
+	} else {
+		publisher = pub
+		defer publisher.Close()
+		log.Println("Kafka emission ready")
+		go startHeartbeat(emitCtx, publisher)
+	}
+	http.HandleFunc("/emit", emitIntake(emitCtx, publisher))
 
 	// Expose metrics and health
 	http.Handle("/metrics", promhttp.Handler())

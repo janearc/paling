@@ -9,3 +9,6 @@ ruff_out.txt
 *_pb2.py
 *_pb2.pyi
 *_pb2_grpc.py
+
+# built binaries
+bin/

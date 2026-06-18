@@ -1,0 +1,29 @@
+version: '3'
+
+# The sidecar consumes contracts via generate-at-build: protos are vendored under
+# proto/ (sources of truth: observability.v1 -> kafka-svc, paling.events.v1 ->
+# paling/proto), and Go bindings are generated into gen/ (never committed).
+
+tasks:
+  sync-proto:
+    desc: Re-vendor protos from their sources of truth.
+    cmds:
+      - cp ../../kafka-logging/proto/observability/v1/observability.proto proto/observability/v1/observability.proto
+      - cp ../paling/proto/banchan_event.proto proto/paling/events/v1/banchan_event.proto
+
+  generate:
+    desc: Generate Go bindings from the vendored proto into gen/ (never committed).
+    cmds:
+      - buf generate
+
+  build:
+    desc: Build the sidecar binary (regenerates bindings first).
+    deps: [generate]
+    cmds:
+      - go build -o bin/paling-sidecar .
+
+  test:
+    desc: Run the sidecar test suite.
+    deps: [generate]
+    cmds:
+      - go test ./...

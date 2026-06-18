@@ -1,0 +1,18 @@
+FROM python:3.12-slim
+
+# Install uv for fast dependency management
+RUN pip install uv
+
+WORKDIR /app
+
+# We only copy the requirements or pyproject.toml first to leverage Docker caching
+COPY pyproject.toml uv.lock ./
+RUN apt-get update && apt-get install -y gcc g++ python3-dev && rm -rf /var/lib/apt/lists/*
+RUN uv pip install --system -r pyproject.toml
+
+# Copy the actual code
+COPY . .
+
+# Munge just watches the filesystem and orchestrates tools.
+# It expects /opt/paling to be mounted into the container.
+ENTRYPOINT ["python", "-m", "paling.munge"]

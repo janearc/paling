@@ -1,0 +1,14 @@
+version: v2
+# Managed mode retargets the Go package to the sidecar's own module, so the
+# vendored protos generate into paling-sidecar/gen/go/... without a cross-repo
+# import and without committing gencode (gen/ is gitignored; run `task generate`).
+# Sources of truth: observability.v1 -> kafka-svc; paling.events.v1 -> paling/proto.
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: paling-sidecar/gen/go
+plugins:
+  - local: protoc-gen-go
+    out: gen/go
+    opt: paths=source_relative

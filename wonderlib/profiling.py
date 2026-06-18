@@ -2,13 +2,12 @@ import re
 import json
 import logging
 from pathlib import Path
-from datetime import datetime
 from functools import lru_cache
 from typing import List, Optional, Any, Callable, Tuple
 
 import spacy
 import torch
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field
 
 from wonderlib.benchmark import Benchmark
 from wonderlib.markdown_xml import markdown_to_xml
@@ -31,11 +30,6 @@ class TaxonometryProfile(BaseModel):
     zipf_cluster: List[int]
     rare_terms: List[str]
     rarity_pos: float  # 0-1 normalized rarity via POS tags
-
-    model_config = ConfigDict(
-        json_encoders={datetime: lambda v: v.isoformat()}
-    )
-
     benchmark: Optional[Benchmark] = None
     filename: Optional[str] = Field(
         None, description="The source filename of the signature (for tracking)."

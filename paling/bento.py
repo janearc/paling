@@ -22,7 +22,7 @@ _BENTO_DIRS = (
     "output",
 )
 
-DEFAULT_BENTOS_ROOT = "/opt/paling/var/bentos"
+DEFAULT_BENTOS_ROOT = str(Path.home() / "var" / "paling" / "bentos")
 
 
 def scaffold_bento(base_dir, name=None, archetype="unprocessed"):

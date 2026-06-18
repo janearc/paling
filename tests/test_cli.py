@@ -62,35 +62,6 @@ def test_paint_args_parsing(monkeypatch):
     assert result.returncode == 0
     assert result.stderr == ""
 
-def test_checkpoint_args_parsing(tmp_path, monkeypatch):
-    import sys
-    from unittest.mock import MagicMock
-    
-    # Mock the delightd module since it may not be installed
-    mock_delightd = MagicMock()
-    mock_backup_module = MagicMock()
-    mock_backup_module.backup.CreateCheckpoint.return_value = ("/tmp/fake-archive.tgz", None)
-    mock_delightd.pkg.backup = mock_backup_module
-    
-    sys.modules["delightd"] = mock_delightd
-    sys.modules["delightd.pkg"] = mock_delightd.pkg
-    sys.modules["delightd.pkg.backup"] = mock_backup_module
-
-    import logging
-    logging.getLogger("paling_cli_script").setLevel(logging.INFO)
-    logging.basicConfig(stream=sys.stdout, level=logging.INFO)
-
-    result = run_cli_in_process([
-        "checkpoint",
-        "-p",
-        "mybento",
-        "-b",
-        str(tmp_path),
-        "--dry-run",
-    ], monkeypatch)
-    assert result.returncode == 0
-    assert "Checkpoint created" in result.stdout or "Checkpoint created" in result.stderr
-
 def test_reward_function():
     from paling.reward import score_response
     # Novelty gives 0.2, length gives 5/200 * 0.4 = 0.01 -> total 0.21

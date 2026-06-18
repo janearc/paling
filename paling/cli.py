@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 # Ensure the parent directory is in python path to import our modules
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -23,6 +24,51 @@ def main():
     )
     
     subparsers = parser.add_subparsers(dest="command", help="Subcommand to execute")
+    
+    # Subcommand: create
+    parser_create = subparsers.add_parser(
+        "create",
+        help="Create resources (e.g. bento)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    create_subparsers = parser_create.add_subparsers(dest="create_command", help="Resource to create")
+    
+    parser_bento = create_subparsers.add_parser(
+        "bento",
+        help="Scaffold a new Paling Bento directory locally",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser_bento.add_argument(
+        "--name", "-n",
+        help="Explicit name of the Bento"
+    )
+    parser_bento.add_argument(
+        "--new",
+        action="store_true",
+        help="Generate a random UUID for the Bento name"
+    )
+    parser_bento.add_argument(
+        "--dir", "-d",
+        default="/opt/paling/var/bentos",
+        help="The directory to create the Bento in"
+    )
+    parser_bento.add_argument(
+        "--type", "-t",
+        choices=["logs", "corpus", "unprocessed"],
+        default="unprocessed",
+        help="The archetype classification for the data"
+    )
+
+    # Subcommand: submit
+    parser_submit = subparsers.add_parser(
+        "submit",
+        help="Submit a local Bento directory to the Paling daemon processing spool",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser_submit.add_argument(
+        "path",
+        help="Path to the local Bento directory to submit"
+    )
     
     # Subcommand: prepare
     parser_prep = subparsers.add_parser(
@@ -250,36 +296,6 @@ def main():
     )
 
     # Subcommand: profile
-    # Subcommand: checkpoint
-    parser_chk = subparsers.add_parser(
-        "checkpoint",
-        help="Create a filesystem checkpoint via delightd daemon",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser_chk.add_argument(
-        "--project",
-        "-p",
-        required=True,
-        help="Name of the project (bento) to checkpoint",
-    )
-    parser_chk.add_argument(
-        "--backup-root",
-        "-b",
-        default="~/var/archive/delightd/exports",
-        help="Root directory where delightd stores archives",
-    )
-    parser_chk.add_argument(
-        "--max-archives",
-        type=int,
-        default=5,
-        help="Maximum number of archives to retain (rotation)",
-    )
-    parser_chk.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Perform a dry run without writing files",
-    )
-
     parser_prof = subparsers.add_parser(
         "profile",
         help="Generate taxonometric profile of documents using Zipf average, part-of-speech complexity, and rare term extraction",
@@ -318,7 +334,66 @@ def main():
         parser.print_help()
         sys.exit(0)
 
-    if args.command == "prepare":
+    if args.command == "create":
+        if args.create_command == "bento":
+            import uuid
+            
+            bento_name = args.name
+            if args.new:
+                bento_name = str(uuid.uuid4())
+                
+            if not bento_name:
+                logger.error("Error: You must specify either --name <string> or --new")
+                sys.exit(1)
+                
+            # Scaffold a bento locally
+            base_path = Path(args.dir).resolve() / bento_name
+        if base_path.exists():
+            logger.error(f"Directory '{base_path}' already exists.")
+            sys.exit(1)
+        
+        directories = [
+            "raw_data", "schema", "adapters", "preflight",
+            "taxonometry", "anchors/owner", "anchors/paling",
+            "acceptance", "output"
+        ]
+        logger.info(f"Scaffolding Bento: {bento_name} (Type: {args.type})...")
+        for dir_name in directories:
+            (base_path / dir_name).mkdir(parents=True, exist_ok=True)
+            
+        schema_path = base_path / "schema" / "schema.json"
+        schema_content = f'''{{
+  "archetype": "{args.type}",
+  "routing": {{
+    "gap_generation": "flan-t5-large",
+    "summarization": "mistral"
+  }}
+}}'''
+        with open(schema_path, "w") as f:
+            f.write(schema_content)
+            
+        logger.info(f"Success! Bento scaffolded at: {base_path}")
+        sys.exit(0)
+        
+    elif args.command == "submit":
+        import subprocess
+        source = Path(args.path).resolve()
+        if not source.exists() or not source.is_dir():
+            logger.error(f"Error: '{source}' is not a valid directory.")
+            sys.exit(1)
+            
+        target_dir = "/opt/paling/var/bentos/"
+        logger.info(f"Submitting '{source.name}' to Paling processing queue at {target_dir}...")
+        cmd = ["rsync", "-a", "--info=progress2", str(source), target_dir]
+        try:
+            subprocess.run(cmd, check=True)
+            logger.info(f"Successfully submitted '{source.name}'.")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Error during rsync submission: {e}")
+            sys.exit(1)
+        sys.exit(0)
+
+    elif args.command == "prepare":
         try:
             build_datasets(
                 input_dir=args.input_dir,
@@ -379,23 +454,6 @@ def main():
         )
         sys.exit(exit_code)
         
-    elif args.command == "checkpoint":
-        # Use delightd backup to create a checkpoint for the given project
-        from delightd.pkg.backup import backup as delight_backup
-        archive_path, err = delight_backup.CreateCheckpoint(
-            ctx=None,  # context not needed for CLI
-            projectName=args.project,
-            projectPath=".",  # checkpoint the current directory
-            backupRoot=args.backup_root,
-            maxArchives=args.max_archives,
-            dryRun=args.dry_run,
-        )
-        if err:
-            logger.error(f"Checkpoint failed: {err}")
-            sys.exit(1)
-        logger.info(f"Checkpoint created at {archive_path}")
-        sys.exit(0)
-
     elif args.command == "profile":
         input_path = Path(args.input)
         output_path = Path(args.output_dir)

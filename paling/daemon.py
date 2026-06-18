@@ -205,6 +205,21 @@ def profile_bento(bento_id: str):
     return report
 
 
+@app.post("/bento/{bento_id}/extract")
+def extract_bento(bento_id: str):
+    # pipeline stage 3: extract the typed relationship graph (concept nodes +
+    # directed edges) into anchors/paling/relationships/. gated on stage-2
+    # taxonometry having run (409 otherwise).
+    bento_path = Path(_BENTOS_ROOT).expanduser().resolve() / bento_id
+    if not bento_path.is_dir():
+        raise HTTPException(status_code=404, detail=f"bento '{bento_id}' not found")
+    report = bento.extract_relationships(bento_path)
+    if not report.extracted:
+        raise HTTPException(status_code=409, detail=report.issues)
+    producer.emit(bento_id, "extract", BanchanState.IN_PROGRESS)
+    return report
+
+
 def serve(port: int = 8090):
     import uvicorn
     import subprocess

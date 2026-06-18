@@ -1,14 +1,12 @@
 # 04 - The Service Mesh (Daemonization)
 
-Paling performs highly compute-intensive tasks (profiling, taxonometry generation, QLoRA training) that take significant time. It cannot remain a simple blocking CLI tool. It must graduate into the operational mesh alongside `delightd` and `obs-svc`.
-
-> **Note (2026-06):** `transparent` has been sunset. Telemetry no longer scrapes a per-host report; services emit Protobuf events over Kafka, and `obs-svc-agg` aggregates them. Paling's telemetry target is therefore Kafka → `obs-svc`, not `transparent`.
+Paling performs highly compute-intensive tasks (profiling, taxonometry generation, QLoRA training) that take significant time. It cannot remain a simple blocking CLI tool. It must graduate into a long-lived daemon with a Go sidecar for telemetry.
 
 ## Hybrid Architecture
 
 Following the success of the `comfyui-svc` deployment:
 *   Paling's core (MLX, Python) runs natively on macOS (or inside an optimized container if possible, but MLX requires metal access so native Python `uv` environment is mandated).
-*   A Go sidecar runs alongside Paling and is its **Kafka emitter**: it publishes health/uptime/progress as `observability.v1` heartbeats and `paling.events.v1` domain events (Confluent Schema Registry protobuf), consumed by `obs-svc`. Keeping emission in the Go sidecar reuses the fleet's franz-go producer convention and keeps Python out of the Kafka/Schema-Registry path.
+*   A Go sidecar runs alongside Paling to provide telemetry — exposing health, uptime, and progress metrics, and emitting lifecycle events so a long training run is never silent.
 *   Paling exposes an API (via MCP or HTTP REST) to allow external orchestration.
 
 ## Asynchronous Bento Operations

@@ -128,6 +128,8 @@ func messageIndex(msg proto.Message) []byte {
 	return b
 }
 
+// schemaID returns the registry id for subject, registering schemaText on the
+// first call for that subject and caching the result for subsequent emits.
 func (p *Publisher) schemaID(ctx context.Context, subject, schemaText string) (int32, error) {
 	p.mu.Lock()
 	if id, ok := p.schemaIDs[subject]; ok {
@@ -146,6 +148,8 @@ func (p *Publisher) schemaID(ctx context.Context, subject, schemaText string) (i
 	return id, nil
 }
 
+// registerSchema POSTs schemaText under subject (RecordNameStrategy) and returns
+// the registry-assigned id. Re-registering an identical schema is idempotent.
 func (p *Publisher) registerSchema(ctx context.Context, subject, schemaText string) (int32, error) {
 	body, err := json.Marshal(map[string]string{"schemaType": "PROTOBUF", "schema": schemaText})
 	if err != nil {

@@ -28,6 +28,9 @@ from pydantic import BaseModel
 from typing import Dict, Optional, Any
 from enum import Enum
 import sys
+from pathlib import Path
+
+from paling import bento
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +38,9 @@ logger = logging.getLogger(__name__)
 # local go sidecar, which does the protobuf + schema-registry + kafka work.
 # best-effort -- emit() never raises, so a sidecar/kafka hiccup can't break a bento.
 _SIDECAR_EMIT_URL = os.environ.get("PALING_SIDECAR_URL", "http://localhost:9090/emit")
+
+# where bentos live on the bare-metal host; create/ingest operate under this root.
+_BENTOS_ROOT = os.environ.get("PALING_BENTOS_ROOT", bento.DEFAULT_BENTOS_ROOT)
 
 # State machine definitions
 class BentoState(str, Enum):
@@ -134,6 +140,42 @@ def train_bento(bento_id: str):
     bentos_state[bento_id] = BentoState.TRAINING
     producer.emit(bento_id, "train", BanchanState.IN_PROGRESS)
     return {"bento_id": bento_id, "status": "enqueued for train"}
+
+
+class CreateBentoRequest(BaseModel):
+    name: Optional[str] = None
+    archetype: str = "unprocessed"
+
+
+class IngestCorpusRequest(BaseModel):
+    source_path: str
+
+
+@app.post("/bento")
+def create_bento(req: CreateBentoRequest):
+    # scaffold a new bento over the API so the agent skill never hand-places files.
+    try:
+        bento_id, path = bento.scaffold_bento(_BENTOS_ROOT, req.name, req.archetype)
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    bentos_state[bento_id] = BentoState.IDLE
+    producer.emit(bento_id, "create", BanchanState.NOT_STARTED)
+    return {"bento_id": bento_id, "path": str(path), "state": BentoState.IDLE}
+
+
+@app.post("/bento/{bento_id}/corpus")
+def add_corpus(bento_id: str, req: IngestCorpusRequest):
+    # ingest a markdown corpus into an existing bento's raw_data.
+    bento_path = Path(_BENTOS_ROOT).expanduser().resolve() / bento_id
+    if not bento_path.is_dir():
+        raise HTTPException(status_code=404, detail=f"bento '{bento_id}' not found")
+    try:
+        count = bento.ingest_corpus(bento_path, req.source_path)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    producer.emit(bento_id, "ingest", BanchanState.IN_PROGRESS)
+    return {"bento_id": bento_id, "files_ingested": count}
+
 
 def serve(port: int = 8090):
     import uvicorn

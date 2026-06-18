@@ -1,12 +1,13 @@
 import os
 import time
 import logging
+from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("paling-munge")
 
 def main():
-    bento_dir = "/opt/paling/var/bentos"
+    bento_dir = os.environ.get("PALING_BENTOS_ROOT", str(Path.home() / "var" / "paling" / "bentos"))
     logger.info("paling-munge starting up")
     logger.info(f"monitoring drop-zone: {bento_dir}")
     

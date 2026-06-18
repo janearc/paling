@@ -31,9 +31,9 @@ import sys
 
 logger = logging.getLogger(__name__)
 
-# the go sidecar owns all kafka/schema-registry/protobuf; the bare-metal daemon
-# only POSTs a small json payload to it locally. emission is best-effort and
-# never raises -- a kafka or sidecar hiccup must not break bento operations.
+# the daemon never speaks kafka itself: emit() posts a small json event to the
+# local go sidecar, which does the protobuf + schema-registry + kafka work.
+# best-effort -- emit() never raises, so a sidecar/kafka hiccup can't break a bento.
 _SIDECAR_EMIT_URL = os.environ.get("PALING_SIDECAR_URL", "http://localhost:9090/emit")
 
 # State machine definitions

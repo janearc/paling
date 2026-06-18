@@ -20,8 +20,10 @@ services:
     labels:
       - "fleet.essential=true"
     user: "502:20"
+    environment:
+      - PALING_BENTOS_ROOT=/var/paling/bentos
     volumes:
-      - /opt/paling:/opt/paling
+      - ${HOME}/var/paling:/var/paling
     restart: unless-stopped
     networks:
       - dev-fleet

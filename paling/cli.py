@@ -49,7 +49,7 @@ def main():
     )
     parser_bento.add_argument(
         "--dir", "-d",
-        default="/opt/paling/var/bentos",
+        default=str(Path.home() / "var" / "paling" / "bentos"),
         help="The directory to create the Bento in"
     )
     parser_bento.add_argument(
@@ -382,7 +382,7 @@ def main():
             logger.error(f"Error: '{source}' is not a valid directory.")
             sys.exit(1)
             
-        target_dir = "/opt/paling/var/bentos/"
+        target_dir = str(Path.home() / "var" / "paling" / "bentos") + "/"
         logger.info(f"Submitting '{source.name}' to Paling processing queue at {target_dir}...")
         cmd = ["rsync", "-a", "--info=progress2", str(source), target_dir]
         try:

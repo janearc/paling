@@ -60,3 +60,57 @@ def ingest_corpus(bento_path, source_path):
     for f in files:
         shutil.copy2(f, raw / f.name)
     return len(files)
+
+
+def verify_bento(bento_path):
+    # walk a bento and report whether it looks processable -- without doing any
+    # processing. this is the pipeline's preflight gate: a bento needs a corpus
+    # and a valid schema before anything downstream (extract/generate/train) runs.
+    path = Path(bento_path).expanduser().resolve()
+    if not path.is_dir():
+        return {"bento_id": path.name, "valid": False, "issues": [f"bento dir not found: {path}"]}
+
+    issues = []
+    missing = [d for d in _BENTO_DIRS if not (path / d).is_dir()]
+    if missing:
+        issues.append(f"missing dirs: {', '.join(missing)}")
+
+    raw = path / "raw_data"
+    md_files = [p for p in raw.rglob("*.md") if p.is_file()] if raw.is_dir() else []
+    if not md_files:
+        issues.append("raw_data has no .md corpus")
+
+    archetype = routing = None
+    schema_path = path / "schema" / "schema.json"
+    if schema_path.is_file():
+        try:
+            schema = json.loads(schema_path.read_text())
+            archetype = schema.get("archetype")
+            routing = schema.get("routing")
+            if not archetype:
+                issues.append("schema.json missing 'archetype'")
+            if not routing:
+                issues.append("schema.json missing 'routing'")
+        except json.JSONDecodeError as e:
+            issues.append(f"schema.json is invalid json: {e}")
+    else:
+        issues.append("missing schema/schema.json")
+
+    return {
+        "bento_id": path.name,
+        "valid": not issues,
+        "corpus_files": len(md_files),
+        "corpus_bytes": sum(p.stat().st_size for p in md_files),
+        "archetype": archetype,
+        "routing": routing,
+        "issues": issues,
+    }
+
+
+def write_preflight(bento_path, report):
+    # persist a verify report to the bento's preflight/ dir so the gate result is
+    # on disk (stage 1 of the pipeline writes here before stage 2 runs).
+    out = Path(bento_path).expanduser().resolve() / "preflight" / "preflight.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report, indent=2))
+    return out

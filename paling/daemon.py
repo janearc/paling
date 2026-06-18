@@ -177,6 +177,19 @@ def add_corpus(bento_id: str, req: IngestCorpusRequest):
     return {"bento_id": bento_id, "files_ingested": count}
 
 
+@app.post("/bento/{bento_id}/verify")
+def verify_bento(bento_id: str):
+    # pipeline stage 1: walk the bento, confirm it looks processable (corpus +
+    # valid schema), write the report to preflight/. no processing here.
+    bento_path = Path(_BENTOS_ROOT).expanduser().resolve() / bento_id
+    if not bento_path.is_dir():
+        raise HTTPException(status_code=404, detail=f"bento '{bento_id}' not found")
+    report = bento.verify_bento(bento_path)
+    bento.write_preflight(bento_path, report)
+    producer.emit(bento_id, "verify", BanchanState.IN_PROGRESS)
+    return report
+
+
 def serve(port: int = 8090):
     import uvicorn
     import subprocess

@@ -48,3 +48,36 @@ def test_add_corpus_missing_bento(tmp_path, monkeypatch):
     c = _client(tmp_path, monkeypatch)
     r = c.post("/bento/ghost/corpus", json={"source_path": str(tmp_path)})
     assert r.status_code == 404
+
+
+def test_verify_valid_bento(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    c.post("/bento", json={"name": "v1"})
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "a.md").write_text("# doc a")
+    c.post("/bento/v1/corpus", json={"source_path": str(corpus)})
+
+    r = c.post("/bento/v1/verify")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["valid"] is True
+    assert body["corpus_files"] == 1
+    assert body["archetype"] == "unprocessed"
+    assert (tmp_path / "v1" / "preflight" / "preflight.json").is_file()
+
+
+def test_verify_empty_bento_fails_gate(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    c.post("/bento", json={"name": "empty"})
+    r = c.post("/bento/empty/verify")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["valid"] is False
+    assert any("no .md corpus" in i for i in body["issues"])
+
+
+def test_verify_missing_bento(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    r = c.post("/bento/ghost/verify")
+    assert r.status_code == 404

@@ -496,3 +496,151 @@ def _graph_metrics(node_ids, edges) -> GraphMetrics:
         clustering.append(2 * links / (k * (k - 1)))
     avg_clustering = round(sum(clustering) / n, 6) if n else 0.0
     return GraphMetrics(density=density, avg_degree=avg_degree, avg_clustering=avg_clustering)
+
+
+# --- stage 4: question generation ---------------------------------------------
+# the depth the 2024 pipeline had came from an iterate-to-convergence loop, not
+# from hand-writing: a small seq2seq model (flan) is asked for instruct-style
+# questions over each context until it stops producing new ones. this is the
+# faithful port of wonder-local's md_to_questions (question half). a later
+# increment brings the stage-3 relationship graph into the prompt for graph-aware
+# question generation -- the "bring it forward to 2026" step.
+
+# the question prompt is flan-specific and was arrived at by trial and error in
+# the 2024 tool; kept verbatim so behaviour ports faithfully before we evolve it.
+_QUESTION_PROMPT = (
+    "Identify three distinct concepts discussed in the following paragraph. For "
+    "each concept, generate one instruct-style question that would help a model "
+    "understand its meaning and how it relates to the other two concepts. Prefix "
+    "each question with 'Q>' on a new line.\n\nParagraph: {context}"
+)
+
+# stop a context once a generation adds no new unique questions, or after this
+# many attempts (flan can loop without converging on dense text).
+_MAX_QUESTION_ATTEMPTS = 10
+
+
+class ContextQuestions(BaseModel):
+    # the converged questions for one context, persisted for stage 5 (answers).
+    context_id: str
+    source_doc: str
+    context: str
+    questions: List[str] = []
+
+
+class QuestionsReport(BaseModel):
+    # result of stage-4 question generation.
+    bento_id: str
+    generated: bool
+    issues: List[str] = []
+    contexts: int = 0
+    contexts_skipped: int = 0
+    questions_total: int = 0
+    questions_by_context: Dict[str, int] = {}
+    attempts_total: int = 0
+    model: Optional[str] = None
+
+
+def _parse_questions(text):
+    # pull 'Q>'-prefixed, '?'-terminated questions out of a flan completion, one
+    # per line, stripping the Q> marker and any leading enumeration ("1. ") in
+    # either order. derived from wonder-local's parser, made line-robust so a
+    # stray enumeration can't swallow the question text.
+    out = []
+    for line in text.splitlines():
+        line = line.strip()
+        prev = None
+        while line != prev:
+            prev = line
+            line = re.sub(r"^[Qq]?>\s*", "", line)
+            line = re.sub(r"^\s*\d+[.)]?\s*", "", line)
+        if line.endswith("?"):
+            out.append(line)
+    return out
+
+
+def generate_questions(bento_path) -> QuestionsReport:
+    # pipeline stage 4: for each corpus context, iterate flan to convergence (no
+    # new unique questions) and persist the questions for stage-5 answering. gated
+    # on stage-2 taxonometry (and transitively stage-1 verify). thin documents (no
+    # rare-term character signal) are skipped rather than fed to generation.
+    from paling import modelclient
+
+    path = Path(bento_path).expanduser().resolve()
+    verify = verify_bento(path)
+    if not verify.valid:
+        return QuestionsReport(
+            bento_id=path.name, generated=False,
+            issues=["verify gate failed; fix the bento and re-verify"] + verify.issues)
+    corpus_summary = path / "taxonometry" / "corpus.json"
+    if not corpus_summary.is_file():
+        return QuestionsReport(
+            bento_id=path.name, generated=False,
+            issues=["stage-2 taxonometry has not run; run `paling profile` first"])
+
+    model = (verify.routing or {}).get("gap_generation", "flan-t5-large")
+    try:
+        thin = set(json.loads(corpus_summary.read_text()).get("thin_documents", []))
+    except (OSError, json.JSONDecodeError):
+        thin = set()
+
+    out_dir = path / "anchors" / "paling" / "questions"
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    raw = path / "raw_data"
+    md_files = sorted(p for p in raw.rglob("*.md") if p.is_file())
+    contexts = skipped = total_q = attempts_total = 0
+    by_context = {}
+    issues = []
+
+    for f in md_files:
+        cid = _normalize_id(f.stem) or f.stem
+        if f.stem in thin or f.name in thin:
+            skipped += 1
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="ignore").strip()
+        except OSError as e:
+            logger.warning("could not read %s (non-fatal): %s", f.name, e)
+            skipped += 1
+            continue
+        if not text:
+            skipped += 1
+            continue
+
+        prompt = _QUESTION_PROMPT.format(context=text)
+        unique = set()
+        attempts = 0
+        # iterate to convergence: regenerate until a pass yields no new question.
+        while attempts < _MAX_QUESTION_ATTEMPTS:
+            try:
+                completion = modelclient.generate_seq2seq(
+                    model, prompt, temperature=0.8, top_p=0.95, top_k=75)
+            except modelclient.ModelUnavailable as e:
+                # fail closed: a missing generation model is fatal to the stage,
+                # not a context to silently drop.
+                issues.append(f"model {model!r} unavailable: {e}")
+                return QuestionsReport(bento_id=path.name, generated=False,
+                                       issues=issues, model=model)
+            attempts += 1
+            prev = len(unique)
+            unique.update(_parse_questions(completion))
+            if len(unique) == prev:
+                break
+
+        attempts_total += attempts
+        questions = sorted(unique)
+        contexts += 1
+        total_q += len(questions)
+        by_context[cid] = len(questions)
+        cq = ContextQuestions(context_id=cid, source_doc=str(f.relative_to(raw)),
+                              context=text, questions=questions)
+        _safe_write_json(out_dir / f"{cid}.json", cq.model_dump())
+
+    return QuestionsReport(
+        bento_id=path.name, generated=True, contexts=contexts,
+        contexts_skipped=skipped, questions_total=total_q,
+        questions_by_context=by_context, attempts_total=attempts_total,
+        model=model, issues=issues)

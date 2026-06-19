@@ -176,3 +176,45 @@ def test_extract_missing_bento(tmp_path, monkeypatch):
     c = _client(tmp_path, monkeypatch)
     r = c.post("/bento/ghost/extract")
     assert r.status_code == 404
+
+
+def test_questions_valid_bento(tmp_path, monkeypatch):
+    from paling import modelclient
+    c = _client(tmp_path, monkeypatch)
+    c.post("/bento", json={"name": "q1"})
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    # distinctive vocabulary so the doc isn't pruned as thin by stage 2.
+    (corpus / "care.md").write_text(
+        "# Ethic of Care\n\nCare bears asymmetric obligation toward the vulnerable; "
+        "beneficence is a structural duty, not optional largesse."
+    )
+    c.post("/bento/q1/corpus", json={"source_path": str(corpus)})
+    c.post("/bento/q1/profile")  # stage-2 gate must pass first
+
+    # stub the seq2seq model so the route runs without loading flan.
+    monkeypatch.setattr(modelclient, "generate_seq2seq", lambda *a, **k: "Q> what is care?")
+    r = c.post("/bento/q1/questions")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["generated"] is True
+    assert body["questions_total"] >= 1
+    assert (tmp_path / "q1" / "anchors" / "paling" / "questions").is_dir()
+
+
+def test_questions_requires_profile(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    c.post("/bento", json={"name": "q2"})
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "care.md").write_text("# Care\n\na body about care and duty")
+    c.post("/bento/q2/corpus", json={"source_path": str(corpus)})
+    # no profile run -> stage-2 gate fails.
+    r = c.post("/bento/q2/questions")
+    assert r.status_code == 409
+
+
+def test_questions_missing_bento(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    r = c.post("/bento/ghost/questions")
+    assert r.status_code == 404

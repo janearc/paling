@@ -220,6 +220,21 @@ def extract_bento(bento_id: str):
     return report
 
 
+@app.post("/bento/{bento_id}/questions")
+def questions_bento(bento_id: str):
+    # pipeline stage 4: generate questions per context by iterating the
+    # gap_generation model to convergence, persisting them under
+    # anchors/paling/questions/. gated on stage-2 taxonometry (409 otherwise).
+    bento_path = Path(_BENTOS_ROOT).expanduser().resolve() / bento_id
+    if not bento_path.is_dir():
+        raise HTTPException(status_code=404, detail=f"bento '{bento_id}' not found")
+    report = bento.generate_questions(bento_path)
+    if not report.generated:
+        raise HTTPException(status_code=409, detail=report.issues)
+    producer.emit(bento_id, "questions", BanchanState.IN_PROGRESS)
+    return report
+
+
 def serve(port: int = 8090):
     import uvicorn
     import subprocess

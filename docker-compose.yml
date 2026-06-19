@@ -25,7 +25,7 @@ services:
       context: .
       dockerfile: Dockerfile.munge
     labels:
-      - "fleet.essential=true"
+      - "fleet.essential=false"
     user: "502:20"
     environment:
       - PALING_BENTOS_ROOT=/var/paling/bentos

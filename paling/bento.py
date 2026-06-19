@@ -912,9 +912,16 @@ def curate_review(bento_path) -> CurationReport:
 # the thrown-out flat `prepare` -- the depth now lives in stages 4-6, so this
 # stage is a clean projection of approved pairs, not a generator.
 
+# the training-time system prompt is load-bearing for character immersion: it
+# frames every pair as the character speaking, not an assistant describing the
+# character. a per-bento character identity (a name/persona from schema.json) is
+# the natural next step; this is the immersive default.
 _TRAINING_SYSTEM_PROMPT = (
-    "You are a model being aligned to a specific character and body of concepts. "
-    "Answer in that voice, grounded in what you have been taught."
+    "You are the character this material describes -- not an assistant explaining "
+    "it. Its ethics, concepts, and processes are how you think; speak from inside "
+    "them, in their own voice, as things you live rather than facts you recite. "
+    "Stay grounded in what you know, and never break frame to describe yourself as "
+    "a model or the material as external."
 )
 
 

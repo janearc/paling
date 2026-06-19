@@ -6,6 +6,7 @@
 
 import json
 import logging
+import re
 import shutil
 import uuid
 from pathlib import Path
@@ -61,6 +62,42 @@ class ProfileReport(BaseModel):
     zipf_cluster: List[int] = [0, 0, 0]
     rarity_pos_avg: float = 0.0
     thin_documents: List[str] = []
+
+
+class GraphMetrics(BaseModel):
+    # cohesion metrics over the relationship graph. edges are stored directed
+    # (direction carries meaning for character: A grounds B != B grounds A), but
+    # these structural metrics are computed on the undirected projection -- "how
+    # tightly knit is this region of meaning" doesn't care about arrow direction.
+    # (gizzard's bug was mixing the two: density on directed edges, then doubled.)
+    density: float = 0.0
+    avg_degree: float = 0.0
+    avg_clustering: float = 0.0
+    directed: bool = True
+    cohesion_basis: str = "undirected"
+
+
+class Coverage(BaseModel):
+    # which corpus documents produced a node. the pipeline used to drop inputs
+    # silently (the missing-signature holes); coverage makes a hole a reported
+    # signal, not something you notice later.
+    corpus_files: int = 0
+    documents_with_node: int = 0
+    missing: List[str] = []
+
+
+class ExtractReport(BaseModel):
+    # result of stage-3 relationship extraction.
+    bento_id: str
+    extracted: bool
+    issues: List[str] = []
+    nodes: int = 0
+    edges: int = 0
+    by_kind: Dict[str, int] = {}
+    by_edge_type: Dict[str, int] = {}
+    metrics: Optional[GraphMetrics] = None
+    low_confidence: int = 0
+    coverage: Optional[Coverage] = None
 
 
 def _safe_write_json(out_path, data):
@@ -256,3 +293,206 @@ def profile_bento(bento_path) -> ProfileReport:
     _safe_write_json(tax_dir / "corpus.json", summary.model_dump())
 
     return ProfileReport(bento_id=path.name, profiled=True, **summary.model_dump())
+
+
+# --- stage 3: relationship extraction -----------------------------------------
+# the structure of character is an ontology of typed concepts -- ethic / concept
+# / process / axiom / system -- and the relationships between them. stage 3 maps
+# the corpus into that graph. this is the deterministic, model-free Layer 1
+# (cue-lexicon node typing + in-prose mention edges); a Layer 2 that routes the
+# corpus through a configurable model client (mistral) for richer typed
+# extraction is the next increment -- see docs/pipeline/stage3-*.md.
+#
+# NB: this deliberately does NOT forklift gizzard. gizzard's extractor that
+# actually ran used document-granular path-string nodes (useless for us) and
+# built its graph from formatted strings, so its metrics were silently empty.
+# here nodes are concept-level (merged across docs by label).
+
+_CANONICAL_KINDS = ("ethic", "concept", "process", "axiom", "system")
+
+
+def _doc_title(text, stem):
+    # a doc's primary concept comes from its first H1; fall back to the filename.
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("# "):
+            return line[2:].strip()
+    return stem.replace("-", " ").replace("_", " ").strip()
+
+
+def _normalize_id(label):
+    return re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
+
+
+def _classify_kind(rel_parts, stem, title):
+    # cue lexicon: the ontology bucket is encoded in the corpus path
+    # (core/ethic/..., skillsets/stewardship/axiom/...), so the deepest matching
+    # path component wins; otherwise look in the filename + title. non-canonical
+    # buckets (primitive, people, seed, ...) fall back to the general 'concept'.
+    for part in reversed(rel_parts):
+        if part.lower() in _CANONICAL_KINDS:
+            return part.lower()
+    hay = f"{stem} {title}".lower()
+    for kind in _CANONICAL_KINDS:
+        if re.search(rf"\b{kind}", hay):
+            return kind
+    return "concept"
+
+
+def extract_relationships(bento_path) -> ExtractReport:
+    # pipeline stage 3: extract a typed concept graph from the corpus. gated on
+    # stage-2 taxonometry (we reuse its rare_terms as sub-document concepts), and
+    # transitively on stage-1 verify. deterministic Layer 1; writes the graph to
+    # anchors/paling/relationships/ (machine-derived anchors), rebuilt each run.
+    path = Path(bento_path).expanduser().resolve()
+    verify = verify_bento(path)
+    if not verify.valid:
+        return ExtractReport(
+            bento_id=path.name, extracted=False,
+            issues=["verify gate failed; fix the bento and re-verify"] + verify.issues)
+    if not (path / "taxonometry" / "corpus.json").is_file():
+        return ExtractReport(
+            bento_id=path.name, extracted=False,
+            issues=["stage-2 taxonometry has not run; run `paling profile` first"])
+
+    raw = path / "raw_data"
+    sig_dir = path / "taxonometry" / "signatures"
+
+    # rare terms (sub-document concepts) keyed by their source doc, from stage 2.
+    rare_by_path = {}
+    for sig in sig_dir.rglob("*-taxonometry.json"):
+        try:
+            data = json.loads(sig.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        fn = data.get("filename")
+        if fn:
+            rare_by_path[str(Path(fn).resolve())] = data.get("rare_terms", [])
+
+    # pass 1: each doc contributes a primary concept node (its subject), merged
+    # across docs by normalized label so a concept named in many docs is ONE node.
+    nodes = {}
+    docs = []
+    missing = []
+    md_files = sorted(p for p in raw.rglob("*.md") if p.is_file())
+    for f in md_files:
+        rel = str(f.relative_to(raw))
+        try:
+            text = f.read_text(encoding="utf-8", errors="ignore")
+        except OSError as e:
+            logger.warning("could not read %s (non-fatal): %s", rel, e)
+            missing.append(rel)
+            continue
+        title = _doc_title(text, f.stem)
+        pid = _normalize_id(title)
+        if not pid:
+            missing.append(rel)
+            continue
+        kind = _classify_kind(f.relative_to(raw).parent.parts, f.stem, title)
+        rare = rare_by_path.get(str(f.resolve()), [])
+        node = nodes.setdefault(pid, {"id": pid, "kind": kind, "label": title,
+                                      "source_docs": [], "rare_terms": [], "confidence": 1.0})
+        node["kind"] = kind          # a primary subject carries its canonical kind
+        node["confidence"] = 1.0
+        if rel not in node["source_docs"]:
+            node["source_docs"].append(rel)
+        for t in rare:
+            if t not in node["rare_terms"]:
+                node["rare_terms"].append(t)
+        docs.append((pid, text, rel, rare))
+
+    # pass 2: promote distinctive rare terms to their own (lower-confidence)
+    # concept nodes, unless they already exist as a primary concept.
+    for pid, text, rel, rare in docs:
+        for term in rare:
+            tid = _normalize_id(term)
+            if not tid or tid in nodes:
+                continue
+            n = nodes.setdefault(tid, {"id": tid, "kind": "concept", "label": term,
+                                       "source_docs": [], "rare_terms": [], "confidence": 0.5})
+            if rel not in n["source_docs"]:
+                n["source_docs"].append(rel)
+
+    # pass 3: directed reference edges -- if concept Q's label appears in a doc
+    # whose primary concept is P, then P references Q. phrase + word-boundary
+    # match (the anchored regex gizzard's :251/:275 botched), labels >= 4 chars.
+    matchers = [(nid, n, re.compile(rf"\b{re.escape(n['label'])}\b", re.I))
+                for nid, n in nodes.items() if len(n["label"]) >= 4]
+    edges = {}
+    for pid, text, rel, rare in docs:
+        for nid, n, rx in matchers:
+            if nid == pid:
+                continue
+            if rx.search(text):
+                key = (pid, nid)
+                conf = 1.0 if n["confidence"] >= 1.0 else 0.6
+                if key in edges:
+                    edges[key]["mentions"] += 1
+                    edges[key]["confidence"] = max(edges[key]["confidence"], conf)
+                else:
+                    edges[key] = {"source": pid, "target": nid, "type": "references",
+                                  "mentions": 1, "confidence": conf, "extractor": "lexical"}
+
+    metrics = _graph_metrics(list(nodes), edges)
+    by_kind = {}
+    for n in nodes.values():
+        by_kind[n["kind"]] = by_kind.get(n["kind"], 0) + 1
+    by_edge_type = {}
+    for e in edges.values():
+        by_edge_type[e["type"]] = by_edge_type.get(e["type"], 0) + 1
+    low_conf = sum(1 for n in nodes.values() if n["confidence"] < 1.0) \
+        + sum(1 for e in edges.values() if e["confidence"] < 1.0)
+    coverage = Coverage(corpus_files=len(md_files),
+                        documents_with_node=len(md_files) - len(missing),
+                        missing=missing)
+
+    out_dir = path / "anchors" / "paling" / "relationships"
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    _write_jsonl(out_dir / "nodes.jsonl", nodes.values())
+    _write_jsonl(out_dir / "edges.jsonl", edges.values())
+    graph = {"bento_id": path.name, "nodes": len(nodes), "edges": len(edges),
+             "by_kind": by_kind, "by_edge_type": by_edge_type,
+             "metrics": metrics.model_dump(), "low_confidence": low_conf,
+             "coverage": coverage.model_dump()}
+    _safe_write_json(out_dir / "graph.json", graph)
+
+    return ExtractReport(bento_id=path.name, extracted=True, nodes=len(nodes),
+                         edges=len(edges), by_kind=by_kind, by_edge_type=by_edge_type,
+                         metrics=metrics, low_confidence=low_conf, coverage=coverage)
+
+
+def _write_jsonl(out_path, rows):
+    try:
+        with out_path.open("w", encoding="utf-8") as fh:
+            for row in rows:
+                fh.write(json.dumps(row) + "\n")
+    except OSError as e:
+        logger.warning("failed to write %s (non-fatal): %s", out_path, e)
+
+
+def _graph_metrics(node_ids, edges) -> GraphMetrics:
+    # cohesion on the UNDIRECTED projection of the directed edge set.
+    n = len(node_ids)
+    adj = {nid: set() for nid in node_ids}
+    undirected = set()
+    for (s, t) in edges:
+        if s in adj and t in adj and s != t:
+            adj[s].add(t)
+            adj[t].add(s)
+            undirected.add(frozenset((s, t)))
+    u = len(undirected)
+    density = round(2 * u / (n * (n - 1)), 6) if n > 1 else 0.0
+    avg_degree = round(2 * u / n, 4) if n else 0.0
+    clustering = []
+    for nid in node_ids:
+        nb = list(adj[nid])
+        k = len(nb)
+        if k < 2:
+            clustering.append(0.0)
+            continue
+        links = sum(1 for i in range(k) for j in range(i + 1, k) if nb[j] in adj[nb[i]])
+        clustering.append(2 * links / (k * (k - 1)))
+    avg_clustering = round(sum(clustering) / n, 6) if n else 0.0
+    return GraphMetrics(density=density, avg_degree=avg_degree, avg_clustering=avg_clustering)

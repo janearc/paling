@@ -125,3 +125,54 @@ def test_profile_missing_bento(tmp_path, monkeypatch):
     c = _client(tmp_path, monkeypatch)
     r = c.post("/bento/ghost/profile")
     assert r.status_code == 404
+
+
+def _extract_corpus(tmp_path):
+    # three cross-referencing concept docs: an ethic that names the other two.
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "a.md").write_text(
+        "# Ethic of Care\n\nCare depends on Stewardship and on the Repair Process."
+    )
+    (corpus / "b.md").write_text("# Stewardship\n\nStewardship tends the garden.")
+    (corpus / "c.md").write_text("# Repair Process\n\nThe repair process restores things.")
+    return corpus
+
+
+def test_extract_valid_bento(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    c.post("/bento", json={"name": "x1"})
+    c.post("/bento/x1/corpus", json={"source_path": str(_extract_corpus(tmp_path))})
+    c.post("/bento/x1/profile")  # stage-2 gate must pass first
+
+    r = c.post("/bento/x1/extract")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["extracted"] is True
+    assert body["nodes"] >= 3
+    # the ethic doc references the other two concepts -> at least two edges.
+    assert body["edges"] >= 2
+    # cue-lexicon typing from the titles.
+    assert "ethic" in body["by_kind"]
+    assert "process" in body["by_kind"]
+    assert body["coverage"]["corpus_files"] == 3
+
+    rels = tmp_path / "x1" / "anchors" / "paling" / "relationships"
+    assert (rels / "nodes.jsonl").is_file()
+    assert (rels / "edges.jsonl").is_file()
+    assert (rels / "graph.json").is_file()
+
+
+def test_extract_requires_profile(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    c.post("/bento", json={"name": "x2"})
+    c.post("/bento/x2/corpus", json={"source_path": str(_extract_corpus(tmp_path))})
+    # no profile run -> stage-2 gate fails.
+    r = c.post("/bento/x2/extract")
+    assert r.status_code == 409
+
+
+def test_extract_missing_bento(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    r = c.post("/bento/ghost/extract")
+    assert r.status_code == 404

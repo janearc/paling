@@ -1,0 +1,90 @@
+{
+  "tools": [
+    {
+      "name": "create_bento",
+      "description": "Scaffold a new paling bento (the unit of work) via the daemon API.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "explicit bento name; a uuid is generated if omitted" },
+          "archetype": { "type": "string", "enum": ["logs", "corpus", "unprocessed"], "default": "unprocessed" }
+        }
+      },
+      "handler": {
+        "type": "http",
+        "method": "POST",
+        "url": "http://host.docker.internal:8090/bento"
+      }
+    },
+    {
+      "name": "verify_bento",
+      "description": "Pipeline stage 1: preflight-gate a bento (corpus + schema), writing the report to preflight/.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "bento_id": { "type": "string" } },
+        "required": ["bento_id"]
+      },
+      "handler": {
+        "type": "http",
+        "method": "POST",
+        "url": "http://host.docker.internal:8090/bento/{bento_id}/verify"
+      }
+    },
+    {
+      "name": "profile_bento",
+      "description": "Pipeline stage 2: taxonometry profiling (lexical signatures, thin-doc detection).",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "bento_id": { "type": "string" } },
+        "required": ["bento_id"]
+      },
+      "handler": {
+        "type": "http",
+        "method": "POST",
+        "url": "http://host.docker.internal:8090/bento/{bento_id}/profile"
+      }
+    },
+    {
+      "name": "extract_bento",
+      "description": "Pipeline stage 3: typed relationship extraction (ethic/concept/process/axiom/system graph).",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "bento_id": { "type": "string" } },
+        "required": ["bento_id"]
+      },
+      "handler": {
+        "type": "http",
+        "method": "POST",
+        "url": "http://host.docker.internal:8090/bento/{bento_id}/extract"
+      }
+    },
+    {
+      "name": "train_bento",
+      "description": "Enqueue QLoRA training for a bento on the bare-metal MLX daemon.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "bento_id": { "type": "string" } },
+        "required": ["bento_id"]
+      },
+      "handler": {
+        "type": "http",
+        "method": "POST",
+        "url": "http://host.docker.internal:8090/bento/{bento_id}/train"
+      }
+    },
+    {
+      "name": "bento_status",
+      "description": "Report the current state-machine status of a bento.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "bento_id": { "type": "string" } },
+        "required": ["bento_id"]
+      },
+      "handler": {
+        "type": "http",
+        "method": "GET",
+        "url": "http://host.docker.internal:8090/bento/{bento_id}/status"
+      }
+    }
+  ]
+}

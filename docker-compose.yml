@@ -4,11 +4,18 @@ services:
     build:
       context: ./sidecar
       dockerfile: Dockerfile
+    # traefik discovers this container via the docker provider (the fleet runs
+    # traefik with --providers.docker=true, exposedbydefault=false). the *.local
+    # host matches the fleet convention (delightd.local, models.local). these
+    # labels route the CLUSTER-FACING sidecar (telemetry, /emit, /health) only;
+    # the bare-metal daemon API is routed via the file-provider config in
+    # infra/traefik/paling.yml because the daemon is off the docker network.
     labels:
       - "fleet.essential=true"
       - "traefik.enable=true"
-      - "traefik.http.routers.paling.rule=Host(`paling.localhost`)"
-      - "traefik.http.services.paling.loadbalancer.server.port=9090"
+      - "traefik.http.routers.paling-sidecar.rule=Host(`paling.local`)"
+      - "traefik.http.routers.paling-sidecar.entrypoints=web"
+      - "traefik.http.services.paling-sidecar.loadbalancer.server.port=9090"
     restart: unless-stopped
     networks:
       - dev-fleet

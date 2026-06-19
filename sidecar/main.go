@@ -1,31 +1,42 @@
 // ==============================================================================
 // Paling Service Mesh Sidecar (Go)
 // ==============================================================================
-// This service operates as the cluster-facing interface for the Paling ecosystem.
-// While the primary Paling daemon MUST run on bare-metal to access Apple Silicon
-// (Metal GPU) for MLX operations, the rest of the hyperscaler fleet relies on
-// containerized service discovery (Traefik) and observability (Prometheus).
+// This is the container-side companion to the Paling daemon. The daemon itself
+// MUST run on bare-metal to reach Apple Silicon (Metal GPU) for MLX operations,
+// so it cannot live on the docker network; this sidecar runs in a container and
+// bridges that bare-metal process into the rest of the fleet's container-based
+// service discovery (Traefik) and metrics scraping (Prometheus).
 //
-// Core Responsibilities:
-//  1. Service Mesh Bridging: Registers the bare-metal Paling node with the
-//     central `delightd` control plane and exposes standard ports to Traefik.
-//  2. Liveness Polling: Continuously polls the bare-metal daemon across the
-//     host boundary (`host.docker.internal:8090`) to ensure MLX hasn't crashed.
-//  3. Telemetry Export: Aggregates error rates, time-of-day histograms, and
-//     success counters, re-exposing them to the cluster's Prometheus scraper
-//     on port 9090.
-//  4. Fault Tolerance: Implements exponential backoff and jitter on all network
-//     boundaries to prevent thundering herds during cluster-wide reboots.
+// The value this sidecar earns is in the bad cases, not the steady state. When
+// the whole cluster reboots at once -- a host power-cycle, a docker substrate
+// restart, recovery from an outage that took the broker and registry down with
+// it -- every network boundary it owns retries with exponential backoff and
+// jitter and every downstream dependency is treated as optionally-absent. The
+// sidecar comes back up on its own and re-attaches to whatever is available,
+// rather than wedging or requiring a hand-restart. Day-to-day polling and
+// emission are the easy path; converging back to a working state after a
+// cluster-wide failure is the job it exists to do.
+//
+// Concretely it does four things:
+//  1. Service bridging: exposes the bare-metal Paling node to the fleet via
+//     Traefik docker labels (discovery is declarative, not a runtime POST;
+//     see the service-discovery note above pollPaling).
+//  2. Liveness polling: continuously polls the bare-metal daemon across the
+//     host boundary (`host.docker.internal:8090`) to detect an MLX crash.
+//  3. Telemetry export: aggregates error rates, time-of-day histograms, and
+//     success counters, re-exposing them to the Prometheus scraper on :9090.
+//  4. Retry on every boundary: exponential backoff with jitter on all network
+//     calls, so a simultaneous restart of many services does not produce a
+//     synchronized retry storm against a recovering dependency.
 //
 // ==============================================================================
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"math/rand"
 	"net/http"
 	"os"
@@ -59,6 +70,12 @@ const (
 
 var startTime = time.Now()
 
+// log is the single logger this file uses. It emits structured JSON to stderr so
+// the lines are ingestible by the fleet's log pipeline rather than free-form text
+// on stdout. Everything below logs through this -- there is no bare fmt.Print or
+// stdlib log.Println anywhere in the sidecar, so the output format is uniform.
+var log = slog.New(slog.NewJSONHandler(os.Stderr, nil))
+
 func getenv(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -85,7 +102,7 @@ func startHeartbeat(ctx context.Context, pub *emit.Publisher) {
 				IdempotencyKey:     fmt.Sprintf("paling-hb-%d", time.Now().UnixNano()),
 			}
 			if err := pub.Publish(ctx, topicObservability, subjectHeartbeat, palingproto.ObservabilitySchema, "paling", hb); err != nil {
-				log.Printf("heartbeat emit failed: %v", err)
+				log.Error("heartbeat emit failed", "err", err)
 			}
 		}
 	}
@@ -119,7 +136,7 @@ func emitIntake(ctx context.Context, pub *emit.Publisher) http.HandlerFunc {
 			ErrorMessage: in.ErrorMsg,
 		}
 		if err := pub.Publish(ctx, topicPaling, subjectBanchan, palingproto.BanchanSchema, in.BentoID, ev); err != nil {
-			log.Printf("banchan emit failed: %v", err)
+			log.Error("banchan emit failed", "err", err)
 			http.Error(w, "emit failed", http.StatusBadGateway)
 			return
 		}
@@ -176,40 +193,28 @@ func doWithRetries(operation func() error) error {
 	b.RandomizationFactor = 0.1 // 10% jitter
 
 	notify := func(err error, d time.Duration) {
-		log.Printf("Operation failed: %v. Retrying in %v...", err, d)
+		log.Warn("operation failed, retrying", "err", err, "retry_in", d)
 	}
 
 	// Wrap with max retries to preserve the original 8-attempt behavior
 	return backoff.RetryNotify(operation, backoff.WithMaxRetries(b, 8), notify)
 }
 
-func registerWithDelightd() error {
-	// Construct the service registration payload for the control plane.
-	// This declares our presence to delightd so Traefik can dynamically route
-	// cluster traffic to our exposed sidecar port.
-	payload := map[string]interface{}{
-		"service": "paling",
-		"port":    9090, // We expose sidecar on 9090
-	}
-	data, _ := json.Marshal(payload)
-	req, err := http.NewRequest("POST", "http://localhost:8080/projects/paling/register", bytes.NewBuffer(data))
-	if err != nil {
-		return err
-	}
-
-	// Execute the registration HTTP request. We assume delightd is reachable
-	// locally or via standard mesh routing rules.
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("failed to register, status code: %d", resp.StatusCode)
-	}
-	return nil
-}
+// service discovery (landed via issue #9): the sidecar does NOT POST a runtime
+// registration to delightd. delightd has no such endpoint -- it discovers
+// services two ways, neither of which is an HTTP call from the service:
+//
+//  1. Traefik routing: the docker provider reads the traefik.* labels on this
+//     container (see docker-compose.yml). The bare-metal daemon, which is off
+//     the docker network, is routed via Traefik's file provider; the daemon
+//     installs its own route into ${PALING_VAR}/var/traefik/dynamic/paling.yml
+//     at startup (it owns the host filesystem).
+//  2. Agent skills: delightd's skill aggregator scans ~/work/<project>/mcp.json.
+//     paling ships mcp.json at its repo root, so delightd surfaces the daemon's
+//     operations as agent tools with no registration call.
+//
+// The previous registerWithDelightd() POSTed to a nonexistent route on the wrong
+// port and was dead code; it has been removed in favour of the real mechanisms.
 
 func pollPaling() {
 	ticker := time.NewTicker(15 * time.Second)
@@ -229,7 +234,7 @@ func pollPaling() {
 		})
 
 		if err != nil {
-			log.Printf("Failed to poll paling: %v", err)
+			log.Error("failed to poll paling", "err", err)
 			errorCounter.Inc()
 			hour := float64(time.Now().Hour())
 			errorHistogram.Observe(hour)
@@ -240,16 +245,13 @@ func pollPaling() {
 }
 
 func main() {
-	log.Println("Starting Paling Go Sidecar...")
+	log.Info("starting paling go sidecar")
 
-	// Register
-	go func() {
-		if err := doWithRetries(registerWithDelightd); err != nil {
-			log.Printf("Warning: delightd registration failed: %v", err)
-		} else {
-			log.Println("Registered with delightd.")
-		}
-	}()
+	// Service discovery is declarative, not a runtime POST: Traefik reads this
+	// container's docker labels, the daemon installs its own Traefik file-route,
+	// and delightd's skill aggregator scans paling's mcp.json. See the note on
+	// the removed registerWithDelightd above.
+	log.Info("discovery is declarative", "mechanisms", "traefik docker labels + daemon file-route + mcp.json", "runtime_registration", false)
 
 	// Polling loop
 	go pollPaling()
@@ -261,11 +263,11 @@ func main() {
 	defer emitCancel()
 	var publisher *emit.Publisher
 	if pub, err := emit.New(emitCtx, strings.Split(getenv("KAFKA_BROKERS", "kafka:9092"), ","), getenv("SCHEMA_REGISTRY_URL", "http://schema-registry:8081")); err != nil {
-		log.Printf("Kafka emission disabled: %v", err)
+		log.Warn("kafka emission disabled", "err", err)
 	} else {
 		publisher = pub
 		defer publisher.Close()
-		log.Println("Kafka emission ready")
+		log.Info("kafka emission ready")
 		go startHeartbeat(emitCtx, publisher)
 	}
 	http.HandleFunc("/emit", emitIntake(emitCtx, publisher))
@@ -276,10 +278,10 @@ func main() {
 	brokers := strings.Split(getenv("KAFKA_BROKERS", "kafka:9092"), ",")
 	daemonOrchestrateURL := getenv("PALING_DAEMON_ORCHESTRATE_URL", daemonOrchestrate)
 	if cons, err := consume.New(emitCtx, brokers, topicOrchestration, orchestrationGroup, daemonOrchestrateURL); err != nil {
-		log.Printf("Kafka orchestration consumer disabled: %v", err)
+		log.Warn("kafka orchestration consumer disabled", "err", err)
 	} else {
 		defer cons.Close()
-		log.Println("Kafka orchestration consumer ready")
+		log.Info("kafka orchestration consumer ready")
 		go cons.Run(emitCtx)
 	}
 
@@ -293,21 +295,23 @@ func main() {
 	server := &http.Server{Addr: ":9090"}
 
 	go func() {
-		log.Println("Listening on :9090")
+		log.Info("listening", "addr", ":9090")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server error: %v", err)
+			log.Error("server error", "err", err)
+			os.Exit(1)
 		}
 	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	log.Println("Shutting down sidecar...")
+	log.Info("shutting down sidecar")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
-		log.Fatalf("Server Shutdown Failed:%+v", err)
+		log.Error("server shutdown failed", "err", err)
+		os.Exit(1)
 	}
-	log.Println("Sidecar exited properly")
+	log.Info("sidecar exited properly")
 }

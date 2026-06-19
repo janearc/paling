@@ -339,6 +339,21 @@ def curate_bento(bento_id: str):
     return report
 
 
+@app.post("/bento/{bento_id}/dataset")
+def dataset_bento(bento_id: str):
+    # pipeline stage 7: project the curated review (stage 6) into
+    # output/train.jsonl + output/valid.jsonl for the trainer. gated on stage-6
+    # curated output existing (409 otherwise).
+    bento_path = Path(_BENTOS_ROOT).expanduser().resolve() / bento_id
+    if not bento_path.is_dir():
+        raise HTTPException(status_code=404, detail=f"bento '{bento_id}' not found")
+    report = bento.build_training_data(bento_path)
+    if not report.built:
+        raise HTTPException(status_code=409, detail=report.issues)
+    producer.emit(bento_id, "dataset", BanchanState.IN_PROGRESS)
+    return report
+
+
 def serve(port: int = 8090):
     import uvicorn
     import subprocess

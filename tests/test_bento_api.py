@@ -300,3 +300,42 @@ def test_curate_missing_bento(tmp_path, monkeypatch):
     c = _client(tmp_path, monkeypatch)
     r = c.post("/bento/ghost/curate")
     assert r.status_code == 404
+
+
+def _seed_curated(tmp_path, name):
+    # a bento with corpus (verify passes) and a stage-6 curated review file.
+    (tmp_path / name / "raw_data" / "d.md").write_text("# D\n\nbody")
+    cdir = tmp_path / name / "anchors" / "paling" / "curated"
+    cdir.mkdir(parents=True, exist_ok=True)
+    (cdir / "d.json").write_text(json.dumps({
+        "context_id": "d", "source_doc": "d.md", "context": "ctx",
+        "questions": [{"question": "what is disingenerosity?", "answers": ["a"],
+                       "rating": 5, "synthesis_answer": "synth", "approved": True}],
+    }))
+
+
+def test_dataset_valid_bento(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    c.post("/bento", json={"name": "d1"})
+    _seed_curated(tmp_path, "d1")
+    r = c.post("/bento/d1/dataset")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["built"] is True
+    assert body["pairs"] == 1
+    assert (tmp_path / "d1" / "output" / "train.jsonl").is_file()
+
+
+def test_dataset_requires_curated(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    c.post("/bento", json={"name": "d2"})
+    (tmp_path / "d2" / "raw_data" / "d.md").write_text("# D\n\nbody")
+    # no stage-6 curated output -> gate fails.
+    r = c.post("/bento/d2/dataset")
+    assert r.status_code == 409
+
+
+def test_dataset_missing_bento(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    r = c.post("/bento/ghost/dataset")
+    assert r.status_code == 404

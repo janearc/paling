@@ -902,3 +902,109 @@ def curate_review(bento_path) -> CurationReport:
     return CurationReport(
         bento_id=path.name, curated=True, contexts=contexts,
         questions_graded=graded, approved=approved_n, model=model, issues=issues)
+
+
+# --- stage 7: training-data assembly ------------------------------------------
+# the bridge from the curated review (stage 6) to the train.jsonl/valid.jsonl the
+# existing QLoRA trainer (`paling train`) consumes. only APPROVED entries become
+# training pairs: question -> synthesis_answer (falling back to the first
+# candidate answer), in the chat `messages` format mlx-lm reads. this replaces
+# the thrown-out flat `prepare` -- the depth now lives in stages 4-6, so this
+# stage is a clean projection of approved pairs, not a generator.
+
+# the training-time system prompt is load-bearing for character immersion: it
+# frames every pair as the character speaking, not an assistant describing the
+# character. a per-bento character identity (a name/persona from schema.json) is
+# the natural next step; this is the immersive default.
+_TRAINING_SYSTEM_PROMPT = (
+    "You are the character this material describes -- not an assistant explaining "
+    "it. Its ethics, concepts, and processes are how you think; speak from inside "
+    "them, in their own voice, as things you live rather than facts you recite. "
+    "Stay grounded in what you know, and never break frame to describe yourself as "
+    "a model or the material as external."
+)
+
+
+# typed result of stage-7 training-data assembly.
+class TrainingDataReport(BaseModel):
+    bento_id: str
+    built: bool
+    issues: List[str] = []
+    contexts: int = 0
+    pairs: int = 0
+    skipped_unapproved: int = 0
+    train: int = 0
+    valid: int = 0
+    out_dir: Optional[str] = None
+
+
+# stage 7: project the curated review into train.jsonl/valid.jsonl for the trainer.
+def build_training_data(bento_path, val_split=0.1, seed=42) -> TrainingDataReport:
+    # gated on stage-6 curated output. reads anchors/paling/curated/, keeps only
+    # approved question->answer pairs, writes output/train.jsonl + output/valid.jsonl
+    # in the chat messages format `paling train` reads. deterministic given seed.
+    import random
+
+    path = Path(bento_path).expanduser().resolve()
+    verify = verify_bento(path)
+    if not verify.valid:
+        return TrainingDataReport(
+            bento_id=path.name, built=False,
+            issues=["verify gate failed; fix the bento and re-verify"] + verify.issues)
+    curated_dir = path / "anchors" / "paling" / "curated"
+    curated_files = sorted(curated_dir.glob("*.json")) if curated_dir.is_dir() else []
+    if not curated_files:
+        return TrainingDataReport(
+            bento_id=path.name, built=False,
+            issues=["stage-6 curated review not found; run `paling curate` first"])
+
+    records = []
+    contexts = skipped = 0
+    for cf in curated_files:
+        try:
+            cur = json.loads(cf.read_text())
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning("could not read %s (non-fatal): %s", cf.name, e)
+            continue
+        contexts += 1
+        # keep only entries the curator (and ultimately a human) approved.
+        for q in cur.get("questions", []):
+            if not q.get("approved", False):
+                skipped += 1
+                continue
+            question = (q.get("question") or "").strip()
+            answer = (q.get("synthesis_answer") or "").strip()
+            if not answer:
+                cands = q.get("answers") or []
+                answer = cands[0].strip() if cands else ""
+            if not question or not answer:
+                skipped += 1
+                continue
+            records.append({"messages": [
+                {"role": "system", "content": _TRAINING_SYSTEM_PROMPT},
+                {"role": "user", "content": question},
+                {"role": "assistant", "content": answer},
+            ]})
+
+    if not records:
+        return TrainingDataReport(
+            bento_id=path.name, built=False, contexts=contexts, skipped_unapproved=skipped,
+            issues=["no approved training pairs; approve curated entries first"])
+
+    # shuffle then split; guarantee a non-empty validation set when we can.
+    random.seed(seed)
+    random.shuffle(records)
+    split = int(len(records) * (1 - val_split))
+    train_recs, valid_recs = records[:split], records[split:]
+    if not valid_recs and len(records) > 1:
+        train_recs, valid_recs = records[:-1], records[-1:]
+
+    out_dir = path / "output"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    _write_jsonl(out_dir / "train.jsonl", train_recs)
+    _write_jsonl(out_dir / "valid.jsonl", valid_recs)
+
+    return TrainingDataReport(
+        bento_id=path.name, built=True, contexts=contexts, pairs=len(records),
+        skipped_unapproved=skipped, train=len(train_recs), valid=len(valid_recs),
+        out_dir=str(out_dir))

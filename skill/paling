@@ -18,6 +18,7 @@ usage:
   paling questions <bento>                  generate questions (stage 4, convergence)
   paling answers <bento>                    generate answers for stage-4 questions (stage 5)
   paling curate <bento>                     grade answers w/ the summarization model (stage 6)
+  paling dataset <bento>                    build train/valid jsonl from approved pairs (stage 7)
   paling prepare <bento>                    enqueue dataset preparation
   paling train <bento>                      enqueue training
   paling status <bento>                     report bento state
@@ -43,6 +44,7 @@ case "$cmd" in
   questions) [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/questions" ;;
   answers)   [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/answers" ;;
   curate)    [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/curate" ;;
+  dataset)   [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/dataset" ;;
   prepare)   [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/prepare" ;;
   train)     [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/train" ;;
   status)    [ $# -eq 1 ] || usage; curl -fsS "$base/bento/$1/status" ;;

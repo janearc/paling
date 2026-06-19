@@ -260,3 +260,43 @@ def test_answers_missing_bento(tmp_path, monkeypatch):
     c = _client(tmp_path, monkeypatch)
     r = c.post("/bento/ghost/answers")
     assert r.status_code == 404
+
+
+def _seed_review(tmp_path, name):
+    # a bento with corpus + schema (verify passes) and a stage-5 review file.
+    (tmp_path / name / "raw_data" / "d.md").write_text("# D\n\nbody")
+    rdir = tmp_path / name / "anchors" / "paling" / "review"
+    rdir.mkdir(parents=True, exist_ok=True)
+    (rdir / "d.json").write_text(json.dumps({
+        "context_id": "d", "source_doc": "d.md", "context": "ctx",
+        "questions": [{"question": "what is disingenerosity?", "answers": ["a"], "approved": False}],
+    }))
+
+
+def test_curate_valid_bento(tmp_path, monkeypatch):
+    from paling import modelclient
+    c = _client(tmp_path, monkeypatch)
+    c.post("/bento", json={"name": "c1"})
+    _seed_review(tmp_path, "c1")
+    monkeypatch.setattr(modelclient, "generate", lambda *a, **k: "RATING: 5\nSYNTHESIS: x")
+    r = c.post("/bento/c1/curate")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["curated"] is True
+    assert body["approved"] == 1
+    assert (tmp_path / "c1" / "anchors" / "paling" / "curated" / "d.json").is_file()
+
+
+def test_curate_requires_review(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    c.post("/bento", json={"name": "c2"})
+    (tmp_path / "c2" / "raw_data" / "d.md").write_text("# D\n\nbody")
+    # no stage-5 review -> gate fails.
+    r = c.post("/bento/c2/curate")
+    assert r.status_code == 409
+
+
+def test_curate_missing_bento(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    r = c.post("/bento/ghost/curate")
+    assert r.status_code == 404

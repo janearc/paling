@@ -222,13 +222,15 @@ def extract_bento(bento_id: str):
 
 def serve(port: int = 8090):
     import uvicorn
-    import subprocess
-    
-    # Register with delightd at startup
-    try:
-        # Enforce checkpoint / registration
-        pass
-    except Exception as e:
-        logger.info(f"Failed to register with delightd: {e}")
+    from paling import discovery
+
+    # fleet discovery (issue #9): the daemon is bare-metal and off the docker
+    # network, so traefik cannot discover it via docker labels (those route the
+    # sidecar). install the daemon's own traefik file-provider route so it becomes
+    # mesh-routable at paling-daemon.local. best-effort -- a failure here never
+    # blocks serving. delightd separately surfaces paling via repo-root mcp.json.
+    result = discovery.install_daemon_route()
+    if not result.installed:
+        logger.info("traefik route not installed (non-fatal): %s", result.message)
 
     uvicorn.run(app, host="127.0.0.1", port=port)

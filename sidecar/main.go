@@ -3,24 +3,25 @@
 // ==============================================================================
 // This service operates as the cluster-facing interface for the Paling ecosystem.
 // While the primary Paling daemon MUST run on bare-metal to access Apple Silicon
-// (Metal GPU) for MLX operations, the rest of the hyperscaler fleet relies on 
+// (Metal GPU) for MLX operations, the rest of the hyperscaler fleet relies on
 // containerized service discovery (Traefik) and observability (Prometheus).
-// 
+//
 // Core Responsibilities:
-// 1. Service Mesh Bridging: Registers the bare-metal Paling node with the 
-//    central `delightd` control plane and exposes standard ports to Traefik.
-// 2. Liveness Polling: Continuously polls the bare-metal daemon across the 
-//    host boundary (`host.docker.internal:8090`) to ensure MLX hasn't crashed.
-// 3. Telemetry Export: Aggregates error rates, time-of-day histograms, and 
-//    success counters, re-exposing them to the cluster's Prometheus scraper 
-//    on port 9090.
-// 4. Fault Tolerance: Implements exponential backoff and jitter on all network 
-//    boundaries to prevent thundering herds during cluster-wide reboots.
+//  1. Service Mesh Bridging: Exposes the bare-metal Paling node to the cluster
+//     via Traefik docker labels (discovery is declarative, not a runtime POST;
+//     see the service-discovery note above pollPaling).
+//  2. Liveness Polling: Continuously polls the bare-metal daemon across the
+//     host boundary (`host.docker.internal:8090`) to ensure MLX hasn't crashed.
+//  3. Telemetry Export: Aggregates error rates, time-of-day histograms, and
+//     success counters, re-exposing them to the cluster's Prometheus scraper
+//     on port 9090.
+//  4. Fault Tolerance: Implements exponential backoff and jitter on all network
+//     boundaries to prevent thundering herds during cluster-wide reboots.
+//
 // ==============================================================================
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -178,33 +179,21 @@ func doWithRetries(operation func() error) error {
 	return backoff.RetryNotify(operation, backoff.WithMaxRetries(b, 8), notify)
 }
 
-func registerWithDelightd() error {
-	// Construct the service registration payload for the control plane.
-	// This declares our presence to delightd so Traefik can dynamically route 
-	// cluster traffic to our exposed sidecar port.
-	payload := map[string]interface{}{
-		"service": "paling",
-		"port":    9090, // We expose sidecar on 9090
-	}
-	data, _ := json.Marshal(payload)
-	req, err := http.NewRequest("POST", "http://localhost:8080/projects/paling/register", bytes.NewBuffer(data))
-	if err != nil {
-		return err
-	}
-	
-	// Execute the registration HTTP request. We assume delightd is reachable 
-	// locally or via standard mesh routing rules.
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("failed to register, status code: %d", resp.StatusCode)
-	}
-	return nil
-}
+// NOTE on service discovery (issue #9): the sidecar does NOT POST a runtime
+// registration to delightd. delightd has no such endpoint -- it discovers
+// services two ways, neither of which is an HTTP call from the service:
+//
+//  1. Traefik routing: the docker provider reads the traefik.* labels on this
+//     container (see docker-compose.yml). The bare-metal daemon, which is off
+//     the docker network, is routed via Traefik's file provider; the daemon
+//     installs its own route into ~/var/traefik/dynamic/paling.yml at startup
+//     (it owns the host filesystem).
+//  2. Agent skills: delightd's skill aggregator scans ~/work/<project>/mcp.json.
+//     paling ships mcp.json at its repo root, so delightd surfaces the daemon's
+//     operations as agent tools with no registration call.
+//
+// The previous registerWithDelightd() POSTed to a nonexistent route on the wrong
+// port and was dead code; it has been removed in favour of the real mechanisms.
 
 func pollPaling() {
 	ticker := time.NewTicker(15 * time.Second)
@@ -237,14 +226,11 @@ func pollPaling() {
 func main() {
 	log.Println("Starting Paling Go Sidecar...")
 
-	// Register
-	go func() {
-		if err := doWithRetries(registerWithDelightd); err != nil {
-			log.Printf("Warning: delightd registration failed: %v", err)
-		} else {
-			log.Println("Registered with delightd.")
-		}
-	}()
+	// Service discovery is declarative, not a runtime POST: Traefik reads this
+	// container's docker labels, the daemon installs its own Traefik file-route,
+	// and delightd's skill aggregator scans paling's mcp.json. See the note on
+	// the removed registerWithDelightd above.
+	log.Println("Discovery: traefik docker labels + daemon file-route + mcp.json (no runtime registration)")
 
 	// Polling loop
 	go pollPaling()
@@ -285,7 +271,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Println("Shutting down sidecar...")
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {

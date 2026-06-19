@@ -1,0 +1,27 @@
+# Traefik file-provider dynamic configuration for the bare-metal paling daemon.
+#
+# The paling daemon runs bare-metal (MLX/Metal) and is therefore NOT on the
+# docker network, so the docker provider cannot discover it the way it discovers
+# the sidecar container. Traefik's file provider is the established fleet pattern
+# for routing to a host-side endpoint (delightd writes the same shape for LLMs
+# under ~/var/traefik/dynamic). The fleet traefik watches that directory:
+#   --providers.file.directory=/etc/traefik/dynamic --providers.file.watch=true
+#   volume: ${HOME}/var/traefik/dynamic:/etc/traefik/dynamic:ro
+#
+# The sidecar installs this file into ~/var/traefik/dynamic/paling.yml at startup
+# (see registerDaemonRoute in sidecar/main.go). host.docker.internal resolves the
+# bare-metal host from inside the traefik container.
+#
+# Route: Host(`paling-daemon.local`) -> the bare-metal daemon control plane.
+http:
+  routers:
+    paling-daemon:
+      rule: "Host(`paling-daemon.local`)"
+      entrypoints:
+        - web
+      service: paling-daemon
+  services:
+    paling-daemon:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:8090"

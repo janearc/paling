@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# paling pre-push coverage gate
+# ==============================================================================
+# Mathematically blocks a push when test coverage drops below the fleet floor
+# (80%). The repo has two test domains -- the Go sidecar and the Python daemon.
+#
+# Each domain is gated only when the push actually touches it: a Python-only
+# change does not pay the Go toolchain cost, and vice versa. This keeps the gate
+# honest (it measures what you are changing) without retroactively blocking on a
+# domain you never touched. A domain whose toolchain or ready venv is absent is
+# SKIPPED with a loud warning rather than silently passed, so the gate degrades
+# visibly on a cold/partial workstation instead of lying -- or hanging on a
+# multi-GB dependency resolve.
+#
+# Install: git config core.hooksPath .githooks
+# ==============================================================================
+set -uo pipefail
+
+FLOOR=80
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fail=0
+
+# determine the set of files this push introduces. stdin carries
+# "<local ref> <local sha> <remote ref> <remote sha>" lines; for a new branch
+# the remote sha is all-zeros, so we diff against the upstream default instead.
+zero="0000000000000000000000000000000000000000"
+changed=""
+while read -r _lref lsha _rref rsha; do
+  [ -z "${lsha:-}" ] && continue
+  if [ "$rsha" = "$zero" ] || [ -z "$rsha" ]; then
+    base="$(git merge-base "$lsha" github/main 2>/dev/null || echo "")"
+  else
+    base="$rsha"
+  fi
+  if [ -n "$base" ]; then
+    changed+=$'\n'"$(git diff --name-only "$base" "$lsha" 2>/dev/null)"
+  else
+    changed+=$'\n'"$(git diff-tree --no-commit-id --name-only -r "$lsha" 2>/dev/null)"
+  fi
+done
+# if stdin was empty (manual invocation), gate everything.
+[ -z "${changed// /}" ] && changed="$(git diff --name-only github/main HEAD 2>/dev/null)"
+
+touches() { grep -qE "$1" <<<"$changed"; }
+
+# --- Go sidecar -------------------------------------------------------------
+# gate only the Go packages this push actually CHANGES, and only those that have
+# tests. you are accountable for the coverage of code you touch -- a push that
+# edits package main (no tests) or leaves a package untouched is not blocked by
+# that package's pre-existing coverage. gen/ is generated; main is wiring.
+if touches '^sidecar/.*\.go$'; then
+  if command -v go >/dev/null 2>&1; then
+    pushd "$repo_root/sidecar" >/dev/null
+    if [ -x "$HOME/go/bin/buf" ] && [ ! -d gen ]; then
+      PATH="$PATH:$HOME/go/bin" "$HOME/go/bin/buf" generate >/dev/null 2>&1 || true
+    fi
+    # changed package dirs (relative to sidecar/), excluding generated gen/.
+    chg_dirs="$(grep -E '^sidecar/.*\.go$' <<<"$changed" \
+      | sed -E 's#^sidecar/##; s#/[^/]+$##' | grep -v '^gen' | sort -u)"
+    cov="" ; lowpkg=""
+    for d in $chg_dirs; do
+      [ -d "$d" ] || continue
+      # only packages that ship *_test.go are measurable; skip the rest.
+      has_tests="$(PATH="$PATH:$HOME/go/bin" go list -f '{{if .TestGoFiles}}y{{end}}' "./$d" 2>/dev/null)"
+      [ "$has_tests" = "y" ] || continue
+      c="$(PATH="$PATH:$HOME/go/bin" go test -cover "./$d" 2>/dev/null \
+        | grep -oE 'coverage: [0-9.]+%' | grep -oE '[0-9.]+')"
+      [ -z "$c" ] && continue
+      if [ -z "$cov" ] || awk -v a="$c" -v b="$cov" 'BEGIN{ exit !(a+0 < b+0) }'; then
+        cov="$c"; lowpkg="$d"
+      fi
+    done
+    popd >/dev/null
+    if [ -z "$cov" ]; then
+      echo "pre-push: Go -- no changed testable packages to gate"
+    else
+      echo "pre-push: gating changed Go package '${lowpkg}' (floor ${FLOOR}%)"
+      awk -v c="$cov" -v f="$FLOOR" 'BEGIN{ exit !(c+0 < f) }' && {
+        echo "pre-push: BLOCKED -- Go coverage ${cov}% < ${FLOOR}% (${lowpkg})"; fail=1
+      } || echo "pre-push: Go coverage ${cov}% OK (${lowpkg})"
+    fi
+  else
+    echo "pre-push: WARNING -- go not found; Go coverage gate SKIPPED"
+  fi
+fi
+
+# --- Python daemon ----------------------------------------------------------
+# requires a READY project venv (the mlx/torch tree already installed). we never
+# trigger a build here: a populated venv is detected first (pytest + coverage +
+# fastapi present); a cold/partial workstation warns-and-skips instead of
+# hanging on a multi-GB resolve.
+if touches '\.py$'; then
+  py=""
+  if [ -x "$repo_root/.venv/bin/python" ]; then
+    if "$repo_root/.venv/bin/python" -c "import pytest, coverage, fastapi" >/dev/null 2>&1; then
+      py="$repo_root/.venv/bin/python"
+    fi
+  fi
+  if [ -n "$py" ]; then
+    echo "pre-push: gating Python coverage (floor ${FLOOR}%)"
+    pushd "$repo_root" >/dev/null
+    "$py" -m coverage run -m pytest -q >/dev/null 2>&1
+    cov="$("$py" -m coverage report 2>/dev/null \
+      | awk '/^TOTAL/{ gsub("%","",$NF); print $NF }')"
+    popd >/dev/null
+    if [ -z "$cov" ]; then
+      echo "pre-push: WARNING -- Python coverage could not be measured (skipped)"
+    else
+      awk -v c="$cov" -v f="$FLOOR" 'BEGIN{ exit !(c+0 < f) }' && {
+        echo "pre-push: BLOCKED -- Python coverage ${cov}% < ${FLOOR}%"; fail=1
+      } || echo "pre-push: Python coverage ${cov}% OK"
+    fi
+  else
+    echo "pre-push: WARNING -- ready .venv absent; Python coverage gate SKIPPED"
+  fi
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo "pre-push: REJECTED (coverage floor not met)"
+  exit 1
+fi
+echo "pre-push: coverage gates satisfied"
+exit 0

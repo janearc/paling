@@ -177,6 +177,34 @@ def add_corpus(bento_id: str, req: IngestCorpusRequest):
     return {"bento_id": bento_id, "files_ingested": count}
 
 
+@app.post("/bento/{bento_id}/verify")
+def verify_bento(bento_id: str):
+    # pipeline stage 1: walk the bento, confirm it looks processable (corpus +
+    # valid schema), write the report to preflight/. no processing here.
+    bento_path = Path(_BENTOS_ROOT).expanduser().resolve() / bento_id
+    if not bento_path.is_dir():
+        raise HTTPException(status_code=404, detail=f"bento '{bento_id}' not found")
+    report = bento.verify_bento(bento_path)
+    bento.write_preflight(bento_path, report)
+    producer.emit(bento_id, "verify", BanchanState.IN_PROGRESS)
+    return report
+
+
+@app.post("/bento/{bento_id}/profile")
+def profile_bento(bento_id: str):
+    # pipeline stage 2: profile the corpus into per-document taxonometry
+    # signatures + a corpus-level summary under taxonometry/. gated on stage-1
+    # verify; a bento that fails the gate returns 409 rather than profiling junk.
+    bento_path = Path(_BENTOS_ROOT).expanduser().resolve() / bento_id
+    if not bento_path.is_dir():
+        raise HTTPException(status_code=404, detail=f"bento '{bento_id}' not found")
+    report = bento.profile_bento(bento_path)
+    if not report.profiled:
+        raise HTTPException(status_code=409, detail=report.issues)
+    producer.emit(bento_id, "profile", BanchanState.IN_PROGRESS)
+    return report
+
+
 def serve(port: int = 8090):
     import uvicorn
     import subprocess

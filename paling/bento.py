@@ -500,14 +500,20 @@ def _graph_metrics(node_ids, edges) -> GraphMetrics:
 
 # --- stage 4: question generation ---------------------------------------------
 # the depth the 2024 pipeline had came from an iterate-to-convergence loop, not
-# from hand-writing: a small seq2seq model (flan) is asked for instruct-style
+# from hand-writing: the gap_generation model is asked for instruct-style
 # questions over each context until it stops producing new ones. this is the
 # faithful port of wonder-local's md_to_questions (question half). a later
 # increment brings the stage-3 relationship graph into the prompt for graph-aware
 # question generation -- the "bring it forward to 2026" step.
+#
+# the model is whatever the bento's schema routes to gap_generation -- a seq2seq
+# model today (flan-t5-large), swappable for something stronger when hardware
+# allows. paling does not depend on any specific model; the routed one is the
+# current worker.
 
-# the question prompt is flan-specific and was arrived at by trial and error in
-# the 2024 tool; kept verbatim so behaviour ports faithfully before we evolve it.
+# the prompt was arrived at by trial and error against the current gap_generation
+# model; kept verbatim so behaviour ports faithfully before we evolve it. a
+# different model may want a different prompt.
 _QUESTION_PROMPT = (
     "Identify three distinct concepts discussed in the following paragraph. For "
     "each concept, generate one instruct-style question that would help a model "
@@ -516,20 +522,20 @@ _QUESTION_PROMPT = (
 )
 
 # stop a context once a generation adds no new unique questions, or after this
-# many attempts (flan can loop without converging on dense text).
+# many attempts (the model can loop without converging on dense text).
 _MAX_QUESTION_ATTEMPTS = 10
 
 
+# typed record of one context's converged questions, persisted for stage 5 (answers).
 class ContextQuestions(BaseModel):
-    # the converged questions for one context, persisted for stage 5 (answers).
     context_id: str
     source_doc: str
     context: str
     questions: List[str] = []
 
 
+# typed result of stage-4 question generation (the daemon and skill serialize this).
 class QuestionsReport(BaseModel):
-    # result of stage-4 question generation.
     bento_id: str
     generated: bool
     issues: List[str] = []
@@ -541,12 +547,12 @@ class QuestionsReport(BaseModel):
     model: Optional[str] = None
 
 
+# extract questions from a model completion by splitting on the 'Q>' marker.
 def _parse_questions(text):
-    # pull questions out of a flan completion. flan emits the 'Q>' marker inline
-    # as often as on its own line (e.g. "Care is what?> Maintenance"), so split on
-    # the marker, then keep each segment up to its first '?' -- dropping trailing
-    # noise and any leading enumeration ("1. "). faithful to wonder-local's
-    # split-on-marker parser, hardened against the enumeration bleed.
+    # the gap_generation model emits the marker inline as often as on its own line
+    # (e.g. "Care is what?> Maintenance"), so split on the marker, then keep each
+    # segment up to its first '?' -- dropping trailing noise and any leading
+    # enumeration ("1. "). faithful to wonder-local's split-on-marker parser.
     out = []
     for chunk in re.split(r"[Qq]?>", text):
         chunk = chunk.strip()
@@ -559,11 +565,12 @@ def _parse_questions(text):
     return out
 
 
+# stage 4: iterate the gap_generation model to convergence per context, persisting
+# the questions for stage-5 answering.
 def generate_questions(bento_path) -> QuestionsReport:
-    # pipeline stage 4: for each corpus context, iterate flan to convergence (no
-    # new unique questions) and persist the questions for stage-5 answering. gated
-    # on stage-2 taxonometry (and transitively stage-1 verify). thin documents (no
-    # rare-term character signal) are skipped rather than fed to generation.
+    # gated on stage-2 taxonometry (and transitively stage-1 verify). thin
+    # documents (no rare-term character signal) are skipped rather than fed to
+    # generation.
     from paling import modelclient
 
     path = Path(bento_path).expanduser().resolve()

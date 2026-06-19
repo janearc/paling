@@ -75,13 +75,13 @@ def generate(model_name, prompt, delightd_url=None, timeout=120, **opts):
 
 # --- seq2seq (encoder-decoder) provider --------------------------------------
 # decoder-only chat models (mistral, llama) are served by ollama and resolved
-# through delightd's discovery above. flan-t5 is encoder-decoder (seq2seq), which
-# ollama does not serve -- so until model-svc stands up a discoverable seq2seq
-# endpoint we run it IN-PROCESS via transformers on Metal (the bare-metal carve-
-# out that is the reason paling serve is not containerized). this is the one
-# provider that does not yet go through delightd discovery; it is the local
-# transport behind the same client surface, and swaps to the model-svc gateway
-# later without callers changing.
+# through delightd's discovery above. encoder-decoder (seq2seq) models -- the
+# current gap_generation worker is flan-t5, swappable -- are not served by ollama,
+# so until model-svc stands up a discoverable seq2seq endpoint we run them
+# IN-PROCESS via transformers on Metal (the bare-metal carve-out that is the
+# reason paling serve is not containerized). this is the one provider that does
+# not yet go through delightd discovery; it is the local transport behind the same
+# client surface, and swaps to the model-svc gateway later without callers changing.
 
 # logical model name -> hugging face id. the bento schema's routing.gap_generation
 # names the logical model ("flan-t5-large"); this maps it to weights already in

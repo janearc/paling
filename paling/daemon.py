@@ -309,6 +309,21 @@ def questions_bento(bento_id: str):
     return report
 
 
+@app.post("/bento/{bento_id}/answers")
+def answers_bento(bento_id: str):
+    # pipeline stage 5: answer each stage-4 question by iterating the model to
+    # convergence, writing the review shape under anchors/paling/review/. gated on
+    # stage-4 questions existing (409 otherwise).
+    bento_path = Path(_BENTOS_ROOT).expanduser().resolve() / bento_id
+    if not bento_path.is_dir():
+        raise HTTPException(status_code=404, detail=f"bento '{bento_id}' not found")
+    report = bento.generate_answers(bento_path)
+    if not report.generated:
+        raise HTTPException(status_code=409, detail=report.issues)
+    producer.emit(bento_id, "answers", BanchanState.IN_PROGRESS)
+    return report
+
+
 def serve(port: int = 8090):
     import uvicorn
     import subprocess

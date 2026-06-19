@@ -651,3 +651,120 @@ def generate_questions(bento_path) -> QuestionsReport:
         contexts_skipped=skipped, questions_total=total_q,
         questions_by_context=by_context, attempts_total=attempts_total,
         model=model, issues=issues)
+
+
+# --- stage 5: answer generation -----------------------------------------------
+# the second half of the convergence engine: for each question stage 4 produced,
+# iterate the gap_generation model to convergence on answers (grounded in the
+# context), collecting the multi-answer set that stage 6 (pre-human curation) and
+# a human then grade. faithful port of wonder-local's md_to_questions answer half.
+# output is the review shape -- question + candidate answers + approved=False.
+
+# the answer prompt grounds the model in the context; kept close to the 2024 tool.
+_ANSWER_PROMPT = "{question} Answer based only on this context:\n\n{context}"
+
+# stop a question once an answer pass yields nothing new, or after this many
+# attempts (answers converge faster than questions; the 2024 tool used 5).
+_MAX_ANSWER_ATTEMPTS = 5
+
+
+# one question with its converged candidate answers, awaiting curation.
+class QuestionEntry(BaseModel):
+    question: str
+    answers: List[str] = []
+    approved: bool = False
+
+
+# the review record for one context: each question with its candidate answers.
+class ContextReview(BaseModel):
+    context_id: str
+    source_doc: str
+    context: str
+    questions: List[QuestionEntry] = []
+
+
+# typed result of stage-5 answer generation.
+class AnswersReport(BaseModel):
+    bento_id: str
+    generated: bool
+    issues: List[str] = []
+    contexts: int = 0
+    questions_answered: int = 0
+    answers_total: int = 0
+    attempts_total: int = 0
+    model: Optional[str] = None
+
+
+# stage 5: answer each stage-4 question by iterating the model to convergence,
+# writing the review shape for stage-6 curation.
+def generate_answers(bento_path) -> AnswersReport:
+    # gated on stage-4 questions existing (transitively stages 1-2). reads
+    # anchors/paling/questions/, writes anchors/paling/review/. fail-closed if the
+    # model is unavailable -- a missing model is fatal, not a question to drop.
+    from paling import modelclient
+
+    path = Path(bento_path).expanduser().resolve()
+    verify = verify_bento(path)
+    if not verify.valid:
+        return AnswersReport(
+            bento_id=path.name, generated=False,
+            issues=["verify gate failed; fix the bento and re-verify"] + verify.issues)
+    q_dir = path / "anchors" / "paling" / "questions"
+    q_files = sorted(q_dir.glob("*.json")) if q_dir.is_dir() else []
+    if not q_files:
+        return AnswersReport(
+            bento_id=path.name, generated=False,
+            issues=["stage-4 questions not found; run `paling questions` first"])
+
+    model = (verify.routing or {}).get("gap_generation", "flan-t5-large")
+
+    out_dir = path / "anchors" / "paling" / "review"
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    contexts = answered = answers_total = attempts_total = 0
+    issues = []
+    for qf in q_files:
+        try:
+            cq = json.loads(qf.read_text())
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning("could not read %s (non-fatal): %s", qf.name, e)
+            continue
+        context = cq.get("context", "")
+        entries = []
+        for question in cq.get("questions", []):
+            prompt = _ANSWER_PROMPT.format(question=question, context=context)
+            seen = set()
+            attempts = 0
+            # iterate to convergence: regenerate until a pass adds no new answer.
+            while attempts < _MAX_ANSWER_ATTEMPTS:
+                try:
+                    ans = modelclient.generate_seq2seq(
+                        model, prompt, temperature=0.9, top_p=0.95, top_k=100).strip()
+                except modelclient.ModelUnavailable as e:
+                    issues.append(f"model {model!r} unavailable: {e}")
+                    return AnswersReport(bento_id=path.name, generated=False,
+                                         issues=issues, model=model)
+                attempts += 1
+                prev = len(seen)
+                norm = ans.lower()
+                if norm and norm not in seen:
+                    seen.add(norm)
+                if len(seen) == prev:
+                    break
+            attempts_total += attempts
+            answers = sorted(seen)
+            answered += 1
+            answers_total += len(answers)
+            entries.append(QuestionEntry(question=question, answers=answers, approved=False))
+        review = ContextReview(context_id=cq.get("context_id", qf.stem),
+                               source_doc=cq.get("source_doc", ""),
+                               context=context, questions=entries)
+        _safe_write_json(out_dir / f"{review.context_id}.json", review.model_dump())
+        contexts += 1
+
+    return AnswersReport(
+        bento_id=path.name, generated=True, contexts=contexts,
+        questions_answered=answered, answers_total=answers_total,
+        attempts_total=attempts_total, model=model, issues=issues)

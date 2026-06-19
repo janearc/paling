@@ -17,3 +17,10 @@ var ObservabilitySchema string
 //
 //go:embed paling/events/v1/banchan_event.proto
 var BanchanSchema string
+
+// OrchestrationSchema is the PROTOBUF schema for the inbound
+// paling.events.v1.OrchestrationCommand the sidecar consumes off Kafka and
+// relays to the bare-metal daemon's control plane.
+//
+//go:embed paling/events/v1/orchestration_command.proto
+var OrchestrationSchema string

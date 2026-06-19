@@ -12,3 +12,8 @@ ruff_out.txt
 
 # built binaries
 bin/
+
+# coverage artifacts
+.coverage
+coverage.out
+htmlcov/

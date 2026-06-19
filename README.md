@@ -161,3 +161,11 @@ Generate semantic complexity signatures of your documents to calculate word freq
 ├── paling.py            # Executable CLI entrypoint
 └── README.md            # Documentation
 ```
+
+---
+
+## author
+
+max toegang <max.toegang@ftml.net>
+🤖 claude · claude-opus-4-8
+🤖 bespoke locally trained models

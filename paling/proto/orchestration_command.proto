@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package paling.events.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Inbound orchestration: the command the fleet (delightd / fleet-svc) produces
+// onto Kafka to drive a bento through the pipeline WITHOUT hand-curling the
+// bare-metal daemon. The Go sidecar consumes this, decodes the Confluent
+// Schema-Registry protobuf frame, and relays it to the daemon's HTTP control
+// plane. paling itself never speaks Kafka -- the sidecar is the only boundary,
+// symmetric with the outbound BanchanLifecycleEvent path.
+
+// The pipeline action a command requests. Mirrors the daemon's control-plane
+// verbs (the stage/banchan vocabulary), not the BanchanState lifecycle enum.
+enum OrchestrationAction {
+  ORCHESTRATION_ACTION_UNSPECIFIED = 0;
+  ORCHESTRATION_ACTION_PREPARE = 1;
+  ORCHESTRATION_ACTION_TRAIN = 2;
+  ORCHESTRATION_ACTION_VERIFY = 3;
+  ORCHESTRATION_ACTION_PROFILE = 4;
+  ORCHESTRATION_ACTION_EXTRACT = 5;
+}
+
+// A single fleet-issued instruction targeting one bento.
+message OrchestrationCommand {
+  // Unique id for this command occurrence; the daemon uses it as the
+  // idempotency key so a redelivered command does not double-enqueue work.
+  string command_id = 1;
+
+  // Distributed tracing context propagated end-to-end (ctx is king). The daemon
+  // echoes this trace_id back onto the BanchanLifecycleEvent it emits.
+  string trace_id = 2;
+
+  // When the issuer produced the command.
+  google.protobuf.Timestamp issued_at = 3;
+
+  // Routing coordinate: which bento this command acts on.
+  string bento_id = 4;
+
+  // The requested pipeline action.
+  OrchestrationAction action = 5;
+
+  // Opaque, action-specific parameters as a JSON object. Kept untyped on the
+  // wire so new actions need no schema change; the daemon validates per-action.
+  string parameters_json = 6;
+
+  // Who issued the command (e.g. "fleet-svc", "delightd"); audit only.
+  string issued_by = 7;
+}

@@ -3,19 +3,20 @@
 // ==============================================================================
 // This service operates as the cluster-facing interface for the Paling ecosystem.
 // While the primary Paling daemon MUST run on bare-metal to access Apple Silicon
-// (Metal GPU) for MLX operations, the rest of the hyperscaler fleet relies on 
+// (Metal GPU) for MLX operations, the rest of the hyperscaler fleet relies on
 // containerized service discovery (Traefik) and observability (Prometheus).
-// 
+//
 // Core Responsibilities:
-// 1. Service Mesh Bridging: Registers the bare-metal Paling node with the 
-//    central `delightd` control plane and exposes standard ports to Traefik.
-// 2. Liveness Polling: Continuously polls the bare-metal daemon across the 
-//    host boundary (`host.docker.internal:8090`) to ensure MLX hasn't crashed.
-// 3. Telemetry Export: Aggregates error rates, time-of-day histograms, and 
-//    success counters, re-exposing them to the cluster's Prometheus scraper 
-//    on port 9090.
-// 4. Fault Tolerance: Implements exponential backoff and jitter on all network 
-//    boundaries to prevent thundering herds during cluster-wide reboots.
+//  1. Service Mesh Bridging: Registers the bare-metal Paling node with the
+//     central `delightd` control plane and exposes standard ports to Traefik.
+//  2. Liveness Polling: Continuously polls the bare-metal daemon across the
+//     host boundary (`host.docker.internal:8090`) to ensure MLX hasn't crashed.
+//  3. Telemetry Export: Aggregates error rates, time-of-day histograms, and
+//     success counters, re-exposing them to the cluster's Prometheus scraper
+//     on port 9090.
+//  4. Fault Tolerance: Implements exponential backoff and jitter on all network
+//     boundaries to prevent thundering herds during cluster-wide reboots.
+//
 // ==============================================================================
 package main
 
@@ -39,6 +40,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"paling-sidecar/consume"
 	"paling-sidecar/emit"
 	observabilityv1 "paling-sidecar/gen/go/observability/v1"
 	palingeventsv1 "paling-sidecar/gen/go/paling/events/v1"
@@ -48,8 +50,11 @@ import (
 const (
 	topicObservability = "observability.events"
 	topicPaling        = "paling.events"
+	topicOrchestration = "paling.orchestration"
+	orchestrationGroup = "paling-sidecar"
 	subjectHeartbeat   = "observability.v1.ServiceHealthHeartbeat"
 	subjectBanchan     = "paling.events.v1.BanchanLifecycleEvent"
+	daemonOrchestrate  = "http://host.docker.internal:8090/orchestrate"
 )
 
 var startTime = time.Now()
@@ -180,7 +185,7 @@ func doWithRetries(operation func() error) error {
 
 func registerWithDelightd() error {
 	// Construct the service registration payload for the control plane.
-	// This declares our presence to delightd so Traefik can dynamically route 
+	// This declares our presence to delightd so Traefik can dynamically route
 	// cluster traffic to our exposed sidecar port.
 	payload := map[string]interface{}{
 		"service": "paling",
@@ -191,15 +196,15 @@ func registerWithDelightd() error {
 	if err != nil {
 		return err
 	}
-	
-	// Execute the registration HTTP request. We assume delightd is reachable 
+
+	// Execute the registration HTTP request. We assume delightd is reachable
 	// locally or via standard mesh routing rules.
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("failed to register, status code: %d", resp.StatusCode)
 	}
@@ -265,6 +270,19 @@ func main() {
 	}
 	http.HandleFunc("/emit", emitIntake(emitCtx, publisher))
 
+	// Inbound orchestration (best-effort): consume OrchestrationCommands off
+	// Kafka and relay them to the bare-metal daemon. A down broker disables
+	// inbound control but never stops the sidecar -- symmetric with emission.
+	brokers := strings.Split(getenv("KAFKA_BROKERS", "kafka:9092"), ",")
+	daemonOrchestrateURL := getenv("PALING_DAEMON_ORCHESTRATE_URL", daemonOrchestrate)
+	if cons, err := consume.New(emitCtx, brokers, topicOrchestration, orchestrationGroup, daemonOrchestrateURL); err != nil {
+		log.Printf("Kafka orchestration consumer disabled: %v", err)
+	} else {
+		defer cons.Close()
+		log.Println("Kafka orchestration consumer ready")
+		go cons.Run(emitCtx)
+	}
+
 	// Expose metrics and health
 	http.Handle("/metrics", promhttp.Handler())
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -285,7 +303,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Println("Shutting down sidecar...")
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {

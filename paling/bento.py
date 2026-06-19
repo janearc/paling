@@ -863,6 +863,7 @@ def curate_review(bento_path) -> CurationReport:
 
     contexts = graded = approved_n = 0
     issues = []
+    # outer loop: one stage-5 review file per context.
     for rf in review_files:
         try:
             rev = json.loads(rf.read_text())
@@ -871,12 +872,14 @@ def curate_review(bento_path) -> CurationReport:
             continue
         context = rev.get("context", "")
         entries = []
+        # inner loop: grade each of this context's questions in turn.
         for q in rev.get("questions", []):
             question = q.get("question", "")
             answers = q.get("answers", [])
             prompt = _CURATION_PROMPT.format(
                 context=context, question=question,
                 answers="\n".join(f"- {a}" for a in answers) or "- (none)")
+            # one model call: grade + synthesize the best answer for this question.
             try:
                 reply = modelclient.generate(model, prompt)
             except modelclient.ModelUnavailable as e:

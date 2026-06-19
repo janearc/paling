@@ -1,3 +1,5 @@
+import json
+
 from fastapi.testclient import TestClient
 
 from paling import daemon
@@ -217,4 +219,44 @@ def test_questions_requires_profile(tmp_path, monkeypatch):
 def test_questions_missing_bento(tmp_path, monkeypatch):
     c = _client(tmp_path, monkeypatch)
     r = c.post("/bento/ghost/questions")
+    assert r.status_code == 404
+
+
+def _seed_questions(tmp_path, name):
+    # a bento with corpus + schema (verify passes) and a stage-4 questions file.
+    (tmp_path / name / "raw_data" / "d.md").write_text("# D\n\nbody about disingenerosity")
+    qdir = tmp_path / name / "anchors" / "paling" / "questions"
+    qdir.mkdir(parents=True, exist_ok=True)
+    (qdir / "d.json").write_text(json.dumps({
+        "context_id": "d", "source_doc": "d.md", "context": "ctx",
+        "questions": ["what is disingenerosity?"],
+    }))
+
+
+def test_answers_valid_bento(tmp_path, monkeypatch):
+    from paling import modelclient
+    c = _client(tmp_path, monkeypatch)
+    c.post("/bento", json={"name": "a1"})
+    _seed_questions(tmp_path, "a1")
+    monkeypatch.setattr(modelclient, "generate_seq2seq", lambda *a, **k: "the withholding of good faith")
+    r = c.post("/bento/a1/answers")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["generated"] is True
+    assert body["questions_answered"] == 1
+    assert (tmp_path / "a1" / "anchors" / "paling" / "review" / "d.json").is_file()
+
+
+def test_answers_requires_questions(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    c.post("/bento", json={"name": "a2"})
+    (tmp_path / "a2" / "raw_data" / "d.md").write_text("# D\n\nbody")
+    # no stage-4 questions -> gate fails.
+    r = c.post("/bento/a2/answers")
+    assert r.status_code == 409
+
+
+def test_answers_missing_bento(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    r = c.post("/bento/ghost/answers")
     assert r.status_code == 404

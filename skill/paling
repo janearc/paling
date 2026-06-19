@@ -16,6 +16,7 @@ usage:
   paling profile <bento>                    profile the corpus -> taxonometry metrics
   paling extract <bento>                    extract the relationship graph
   paling questions <bento>                  generate questions (stage 4, convergence)
+  paling answers <bento>                    generate answers for stage-4 questions (stage 5)
   paling prepare <bento>                    enqueue dataset preparation
   paling train <bento>                      enqueue training
   paling status <bento>                     report bento state
@@ -39,6 +40,7 @@ case "$cmd" in
   profile)   [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/profile" ;;
   extract)   [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/extract" ;;
   questions) [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/questions" ;;
+  answers)   [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/answers" ;;
   prepare)   [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/prepare" ;;
   train)     [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/train" ;;
   status)    [ $# -eq 1 ] || usage; curl -fsS "$base/bento/$1/status" ;;

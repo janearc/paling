@@ -20,6 +20,14 @@ def test_parse_questions_extracts_q_prefixed_terminated():
     assert qs == ["what is care?", "how does care relate to repair?"]
 
 
+def test_parse_questions_handles_inline_marker():
+    # flan emits the marker mid-line; the question ends at its first '?'. this is
+    # the real-output case a line-based parser missed (caught via live smoke).
+    assert bento._parse_questions("Care is what?> Maintenance") == ["Care is what?"]
+    assert bento._parse_questions("Q> what is care? > how is it repaired? noise") == \
+        ["what is care?", "how is it repaired?"]
+
+
 def test_generate_questions_converges_and_persists(tmp_path, monkeypatch):
     bpath = _scaffold_with_corpus(tmp_path)
     calls = {"n": 0}

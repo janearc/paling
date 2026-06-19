@@ -542,20 +542,20 @@ class QuestionsReport(BaseModel):
 
 
 def _parse_questions(text):
-    # pull 'Q>'-prefixed, '?'-terminated questions out of a flan completion, one
-    # per line, stripping the Q> marker and any leading enumeration ("1. ") in
-    # either order. derived from wonder-local's parser, made line-robust so a
-    # stray enumeration can't swallow the question text.
+    # pull questions out of a flan completion. flan emits the 'Q>' marker inline
+    # as often as on its own line (e.g. "Care is what?> Maintenance"), so split on
+    # the marker, then keep each segment up to its first '?' -- dropping trailing
+    # noise and any leading enumeration ("1. "). faithful to wonder-local's
+    # split-on-marker parser, hardened against the enumeration bleed.
     out = []
-    for line in text.splitlines():
-        line = line.strip()
-        prev = None
-        while line != prev:
-            prev = line
-            line = re.sub(r"^[Qq]?>\s*", "", line)
-            line = re.sub(r"^\s*\d+[.)]?\s*", "", line)
-        if line.endswith("?"):
-            out.append(line)
+    for chunk in re.split(r"[Qq]?>", text):
+        chunk = chunk.strip()
+        if "?" not in chunk:
+            continue
+        q = chunk[: chunk.index("?") + 1]
+        q = re.sub(r"^\s*\d+[.)]?\s*", "", q).strip()
+        if len(q) > 1 and q.endswith("?"):
+            out.append(q)
     return out
 
 

@@ -26,6 +26,7 @@ import urllib.request
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Optional, Any
+from collections import OrderedDict
 from enum import Enum
 import sys
 from pathlib import Path
@@ -142,6 +143,79 @@ def train_bento(bento_id: str):
     return {"bento_id": bento_id, "status": "enqueued for train"}
 
 
+class OrchestrationCommand(BaseModel):
+    # inbound orchestration relayed by the go sidecar from kafka. the fleet
+    # (delightd/fleet-svc) produces these to drive a bento through the pipeline
+    # without hand-curling the daemon. command_id is the idempotency key.
+    command_id: str
+    bento_id: str
+    action: str
+    trace_id: str = ""
+    parameters_json: str = ""
+    issued_by: str = ""
+
+
+# maps the wire OrchestrationAction enum names (and their bare verbs) to the
+# bento state the action drives. unknown actions are rejected with 400 so the
+# sidecar marks the command permanently failed rather than retrying forever.
+_ORCHESTRATION_ACTIONS = {
+    "ORCHESTRATION_ACTION_PREPARE": ("prepare", BentoState.PREPARING),
+    "ORCHESTRATION_ACTION_TRAIN": ("train", BentoState.TRAINING),
+    "PREPARE": ("prepare", BentoState.PREPARING),
+    "TRAIN": ("train", BentoState.TRAINING),
+}
+
+# command_ids already accepted, so a redelivered command is a no-op. bounded in
+# size: a redelivery window of recent ids is all idempotency needs here.
+_seen_commands: "OrderedDict[str, str]" = OrderedDict()
+_SEEN_COMMANDS_MAX = 4096
+
+
+def _remember_command(command_id: str) -> bool:
+    # returns True if this command_id is new (and records it), False if already
+    # seen. keeps the daemon idempotent under at-least-once kafka delivery.
+    if command_id in _seen_commands:
+        return False
+    _seen_commands[command_id] = ""
+    while len(_seen_commands) > _SEEN_COMMANDS_MAX:
+        _seen_commands.popitem(last=False)
+    return True
+
+
+@app.post("/orchestrate")
+def orchestrate(cmd: OrchestrationCommand):
+    # control-plane entry the sidecar relays inbound kafka commands to. validates
+    # the action, dedupes on command_id, drives the bento state machine, and
+    # emits a lifecycle event carrying the originating trace_id.
+    mapping = _ORCHESTRATION_ACTIONS.get(cmd.action.upper())
+    if mapping is None:
+        raise HTTPException(status_code=400, detail=f"unknown action '{cmd.action}'")
+
+    if not _remember_command(cmd.command_id):
+        return {
+            "command_id": cmd.command_id,
+            "bento_id": cmd.bento_id,
+            "status": "duplicate",
+        }
+
+    banchan_name, target_state = mapping
+    bentos_state[cmd.bento_id] = target_state
+    producer.emit(cmd.bento_id, banchan_name, BanchanState.IN_PROGRESS, trace_id=cmd.trace_id)
+    logger.info(
+        "orchestration accepted: command_id=%s bento_id=%s action=%s issued_by=%s",
+        cmd.command_id,
+        cmd.bento_id,
+        banchan_name,
+        cmd.issued_by,
+    )
+    return {
+        "command_id": cmd.command_id,
+        "bento_id": cmd.bento_id,
+        "action": banchan_name,
+        "status": "accepted",
+    }
+
+
 class CreateBentoRequest(BaseModel):
     name: Optional[str] = None
     archetype: str = "unprocessed"
@@ -217,6 +291,51 @@ def extract_bento(bento_id: str):
     if not report.extracted:
         raise HTTPException(status_code=409, detail=report.issues)
     producer.emit(bento_id, "extract", BanchanState.IN_PROGRESS)
+    return report
+
+
+@app.post("/bento/{bento_id}/questions")
+def questions_bento(bento_id: str):
+    # pipeline stage 4: generate questions per context by iterating the
+    # gap_generation model to convergence, persisting them under
+    # anchors/paling/questions/. gated on stage-2 taxonometry (409 otherwise).
+    bento_path = Path(_BENTOS_ROOT).expanduser().resolve() / bento_id
+    if not bento_path.is_dir():
+        raise HTTPException(status_code=404, detail=f"bento '{bento_id}' not found")
+    report = bento.generate_questions(bento_path)
+    if not report.generated:
+        raise HTTPException(status_code=409, detail=report.issues)
+    producer.emit(bento_id, "questions", BanchanState.IN_PROGRESS)
+    return report
+
+
+@app.post("/bento/{bento_id}/answers")
+def answers_bento(bento_id: str):
+    # pipeline stage 5: answer each stage-4 question by iterating the model to
+    # convergence, writing the review shape under anchors/paling/review/. gated on
+    # stage-4 questions existing (409 otherwise).
+    bento_path = Path(_BENTOS_ROOT).expanduser().resolve() / bento_id
+    if not bento_path.is_dir():
+        raise HTTPException(status_code=404, detail=f"bento '{bento_id}' not found")
+    report = bento.generate_answers(bento_path)
+    if not report.generated:
+        raise HTTPException(status_code=409, detail=report.issues)
+    producer.emit(bento_id, "answers", BanchanState.IN_PROGRESS)
+    return report
+
+
+@app.post("/bento/{bento_id}/curate")
+def curate_bento(bento_id: str):
+    # pipeline stage 6: grade stage-5 answers with the summarization model and
+    # write the curated review under anchors/paling/curated/. gated on stage-5
+    # review existing (409 otherwise).
+    bento_path = Path(_BENTOS_ROOT).expanduser().resolve() / bento_id
+    if not bento_path.is_dir():
+        raise HTTPException(status_code=404, detail=f"bento '{bento_id}' not found")
+    report = bento.curate_review(bento_path)
+    if not report.curated:
+        raise HTTPException(status_code=409, detail=report.issues)
+    producer.emit(bento_id, "curate", BanchanState.IN_PROGRESS)
     return report
 
 

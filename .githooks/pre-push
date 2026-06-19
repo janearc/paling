@@ -45,40 +45,29 @@ done
 touches() { grep -qE "$1" <<<"$changed"; }
 
 # --- Go sidecar -------------------------------------------------------------
-# gate only the Go packages this push actually CHANGES, and only those that have
-# tests. you are accountable for the coverage of code you touch -- a push that
-# edits package main (no tests) or leaves a package untouched is not blocked by
-# that package's pre-existing coverage. gen/ is generated; main is wiring.
-if touches '^sidecar/.*\.go$'; then
+# gate the packages that carry logic (consume + emit). gen/ is generated and
+# main is wiring; testing only the *_test.go-bearing packages keeps the metric
+# honest about code that is actually under test.
+if touches '^sidecar/'; then
   if command -v go >/dev/null 2>&1; then
+    echo "pre-push: gating Go sidecar coverage (floor ${FLOOR}%)"
     pushd "$repo_root/sidecar" >/dev/null
     if [ -x "$HOME/go/bin/buf" ] && [ ! -d gen ]; then
       PATH="$PATH:$HOME/go/bin" "$HOME/go/bin/buf" generate >/dev/null 2>&1 || true
     fi
-    # changed package dirs (relative to sidecar/), excluding generated gen/.
-    chg_dirs="$(grep -E '^sidecar/.*\.go$' <<<"$changed" \
-      | sed -E 's#^sidecar/##; s#/[^/]+$##' | grep -v '^gen' | sort -u)"
-    cov="" ; lowpkg=""
-    for d in $chg_dirs; do
-      [ -d "$d" ] || continue
-      # only packages that ship *_test.go are measurable; skip the rest.
-      has_tests="$(PATH="$PATH:$HOME/go/bin" go list -f '{{if .TestGoFiles}}y{{end}}' "./$d" 2>/dev/null)"
-      [ "$has_tests" = "y" ] || continue
-      c="$(PATH="$PATH:$HOME/go/bin" go test -cover "./$d" 2>/dev/null \
-        | grep -oE 'coverage: [0-9.]+%' | grep -oE '[0-9.]+')"
-      [ -z "$c" ] && continue
-      if [ -z "$cov" ] || awk -v a="$c" -v b="$cov" 'BEGIN{ exit !(a+0 < b+0) }'; then
-        cov="$c"; lowpkg="$d"
-      fi
-    done
+    pkgs="$(PATH="$PATH:$HOME/go/bin" go list -f '{{if .TestGoFiles}}{{.ImportPath}}{{end}}' ./... 2>/dev/null)"
+    cov=""
+    if [ -n "$pkgs" ]; then
+      cov="$(PATH="$PATH:$HOME/go/bin" go test -cover $pkgs 2>/dev/null \
+        | grep -oE 'coverage: [0-9.]+%' | grep -oE '[0-9.]+' | sort -n | head -1)"
+    fi
     popd >/dev/null
     if [ -z "$cov" ]; then
-      echo "pre-push: Go -- no changed testable packages to gate"
+      echo "pre-push: WARNING -- Go coverage could not be measured (skipped)"
     else
-      echo "pre-push: gating changed Go package '${lowpkg}' (floor ${FLOOR}%)"
       awk -v c="$cov" -v f="$FLOOR" 'BEGIN{ exit !(c+0 < f) }' && {
-        echo "pre-push: BLOCKED -- Go coverage ${cov}% < ${FLOOR}% (${lowpkg})"; fail=1
-      } || echo "pre-push: Go coverage ${cov}% OK (${lowpkg})"
+        echo "pre-push: BLOCKED -- Go coverage ${cov}% < ${FLOOR}%"; fail=1
+      } || echo "pre-push: Go coverage ${cov}% OK"
     fi
   else
     echo "pre-push: WARNING -- go not found; Go coverage gate SKIPPED"

@@ -1,3 +1,5 @@
+import json
+
 from fastapi.testclient import TestClient
 
 from paling import daemon
@@ -175,4 +177,126 @@ def test_extract_requires_profile(tmp_path, monkeypatch):
 def test_extract_missing_bento(tmp_path, monkeypatch):
     c = _client(tmp_path, monkeypatch)
     r = c.post("/bento/ghost/extract")
+    assert r.status_code == 404
+
+
+def test_questions_valid_bento(tmp_path, monkeypatch):
+    from paling import modelclient
+    c = _client(tmp_path, monkeypatch)
+    c.post("/bento", json={"name": "q1"})
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    # distinctive vocabulary so the doc isn't pruned as thin by stage 2.
+    (corpus / "care.md").write_text(
+        "# Ethic of Care\n\nCare bears asymmetric obligation toward the vulnerable; "
+        "beneficence is a structural duty, not optional largesse."
+    )
+    c.post("/bento/q1/corpus", json={"source_path": str(corpus)})
+    c.post("/bento/q1/profile")  # stage-2 gate must pass first
+
+    # stub the seq2seq model so the route runs without loading flan.
+    monkeypatch.setattr(modelclient, "generate_seq2seq", lambda *a, **k: "Q> what is care?")
+    r = c.post("/bento/q1/questions")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["generated"] is True
+    assert body["questions_total"] >= 1
+    assert (tmp_path / "q1" / "anchors" / "paling" / "questions").is_dir()
+
+
+def test_questions_requires_profile(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    c.post("/bento", json={"name": "q2"})
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "care.md").write_text("# Care\n\na body about care and duty")
+    c.post("/bento/q2/corpus", json={"source_path": str(corpus)})
+    # no profile run -> stage-2 gate fails.
+    r = c.post("/bento/q2/questions")
+    assert r.status_code == 409
+
+
+def test_questions_missing_bento(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    r = c.post("/bento/ghost/questions")
+    assert r.status_code == 404
+
+
+def _seed_questions(tmp_path, name):
+    # a bento with corpus + schema (verify passes) and a stage-4 questions file.
+    (tmp_path / name / "raw_data" / "d.md").write_text("# D\n\nbody about disingenerosity")
+    qdir = tmp_path / name / "anchors" / "paling" / "questions"
+    qdir.mkdir(parents=True, exist_ok=True)
+    (qdir / "d.json").write_text(json.dumps({
+        "context_id": "d", "source_doc": "d.md", "context": "ctx",
+        "questions": ["what is disingenerosity?"],
+    }))
+
+
+def test_answers_valid_bento(tmp_path, monkeypatch):
+    from paling import modelclient
+    c = _client(tmp_path, monkeypatch)
+    c.post("/bento", json={"name": "a1"})
+    _seed_questions(tmp_path, "a1")
+    monkeypatch.setattr(modelclient, "generate_seq2seq", lambda *a, **k: "the withholding of good faith")
+    r = c.post("/bento/a1/answers")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["generated"] is True
+    assert body["questions_answered"] == 1
+    assert (tmp_path / "a1" / "anchors" / "paling" / "review" / "d.json").is_file()
+
+
+def test_answers_requires_questions(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    c.post("/bento", json={"name": "a2"})
+    (tmp_path / "a2" / "raw_data" / "d.md").write_text("# D\n\nbody")
+    # no stage-4 questions -> gate fails.
+    r = c.post("/bento/a2/answers")
+    assert r.status_code == 409
+
+
+def test_answers_missing_bento(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    r = c.post("/bento/ghost/answers")
+    assert r.status_code == 404
+
+
+def _seed_review(tmp_path, name):
+    # a bento with corpus + schema (verify passes) and a stage-5 review file.
+    (tmp_path / name / "raw_data" / "d.md").write_text("# D\n\nbody")
+    rdir = tmp_path / name / "anchors" / "paling" / "review"
+    rdir.mkdir(parents=True, exist_ok=True)
+    (rdir / "d.json").write_text(json.dumps({
+        "context_id": "d", "source_doc": "d.md", "context": "ctx",
+        "questions": [{"question": "what is disingenerosity?", "answers": ["a"], "approved": False}],
+    }))
+
+
+def test_curate_valid_bento(tmp_path, monkeypatch):
+    from paling import modelclient
+    c = _client(tmp_path, monkeypatch)
+    c.post("/bento", json={"name": "c1"})
+    _seed_review(tmp_path, "c1")
+    monkeypatch.setattr(modelclient, "generate", lambda *a, **k: "RATING: 5\nSYNTHESIS: x")
+    r = c.post("/bento/c1/curate")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["curated"] is True
+    assert body["approved"] == 1
+    assert (tmp_path / "c1" / "anchors" / "paling" / "curated" / "d.json").is_file()
+
+
+def test_curate_requires_review(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    c.post("/bento", json={"name": "c2"})
+    (tmp_path / "c2" / "raw_data" / "d.md").write_text("# D\n\nbody")
+    # no stage-5 review -> gate fails.
+    r = c.post("/bento/c2/curate")
+    assert r.status_code == 409
+
+
+def test_curate_missing_bento(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    r = c.post("/bento/ghost/curate")
     assert r.status_code == 404

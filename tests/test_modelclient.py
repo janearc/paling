@@ -82,3 +82,47 @@ def test_generate_raises_when_unavailable(monkeypatch):
         assert False, "expected ModelUnavailable"
     except modelclient.ModelUnavailable:
         pass
+
+
+def test_default_delightd_url_targets_8088():
+    # regression: the client previously defaulted to :8080, which is not where
+    # delightd binds (:8088) -- discovery silently resolved nothing.
+    assert modelclient.DEFAULT_DELIGHTD_URL.endswith(":8088")
+
+
+def test_get_seq2seq_caches_backend_without_loading():
+    # constructing a backend must not load torch/transformers (load is deferred
+    # to generate); two lookups return the same cached instance.
+    modelclient._seq2seq_backends.pop("flan-t5-large", None)
+    b1 = modelclient.get_seq2seq("flan-t5-large")
+    b2 = modelclient.get_seq2seq("flan-t5-large")
+    assert b1 is b2
+    assert b1.hf_id == "google/flan-t5-large"
+    assert b1._model is None  # not loaded
+    modelclient._seq2seq_backends.pop("flan-t5-large", None)
+
+
+def test_get_seq2seq_unknown_fails_closed():
+    try:
+        modelclient.get_seq2seq("not-a-model")
+        assert False, "expected ModelUnavailable"
+    except modelclient.ModelUnavailable:
+        pass
+
+
+def test_generate_seq2seq_uses_cached_backend(monkeypatch):
+    # inject a fake backend so the path is exercised without loading weights.
+    class _FakeBackend:
+        def __init__(self):
+            self.seen = None
+
+        def generate(self, prompt, **opts):
+            self.seen = prompt
+            return "Q> what is care?"
+
+    fake = _FakeBackend()
+    modelclient._seq2seq_backends["flan-t5-large"] = fake
+    out = modelclient.generate_seq2seq("flan-t5-large", "context about care")
+    assert out == "Q> what is care?"
+    assert fake.seen == "context about care"
+    modelclient._seq2seq_backends.pop("flan-t5-large", None)

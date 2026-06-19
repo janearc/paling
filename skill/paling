@@ -15,6 +15,9 @@ usage:
   paling verify <bento>                     check a bento is processable (preflight)
   paling profile <bento>                    profile the corpus -> taxonometry metrics
   paling extract <bento>                    extract the relationship graph
+  paling questions <bento>                  generate questions (stage 4, convergence)
+  paling answers <bento>                    generate answers for stage-4 questions (stage 5)
+  paling curate <bento>                     grade answers w/ the summarization model (stage 6)
   paling prepare <bento>                    enqueue dataset preparation
   paling train <bento>                      enqueue training
   paling status <bento>                     report bento state
@@ -34,12 +37,15 @@ case "$cmd" in
     curl -fsS -X POST "$base/bento/$1/corpus" -H 'content-type: application/json' \
       -d "{\"source_path\":\"$2\"}"
     ;;
-  verify)  [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/verify" ;;
-  profile) [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/profile" ;;
-  extract) [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/extract" ;;
-  prepare) [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/prepare" ;;
-  train)   [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/train" ;;
-  status)  [ $# -eq 1 ] || usage; curl -fsS "$base/bento/$1/status" ;;
+  verify)    [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/verify" ;;
+  profile)   [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/profile" ;;
+  extract)   [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/extract" ;;
+  questions) [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/questions" ;;
+  answers)   [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/answers" ;;
+  curate)    [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/curate" ;;
+  prepare)   [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/prepare" ;;
+  train)     [ $# -eq 1 ] || usage; curl -fsS -X POST "$base/bento/$1/train" ;;
+  status)    [ $# -eq 1 ] || usage; curl -fsS "$base/bento/$1/status" ;;
   *) usage ;;
 esac
 echo

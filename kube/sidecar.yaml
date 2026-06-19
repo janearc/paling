@@ -1,0 +1,150 @@
+# =============================================================================
+# paling Go sidecar — the containerizable half of the weird eel
+# =============================================================================
+# The daemon stays bare-metal (see daemon-endpoints.yaml); the sidecar is an
+# ordinary stateless Go service and migrates like any other fleet Deployment.
+# It does three jobs that have to live in the cluster:
+#   - polls the bare-metal daemon's /health across the host boundary (liveness
+#     of the MLX process, surfaced as Prometheus counters),
+#   - exposes /metrics for the fleet scraper and /health for kube probes,
+#   - bridges paling to Kafka (emit/consume) — best-effort, never fatal.
+# All on :9090 (see sidecar/main.go).
+#
+# HOST-GATEWAY ASSUMPTION (this is why the hostAliases block exists):
+#   The sidecar's poll loop dials `host.docker.internal:8090` — that name is
+#   hardcoded in sidecar/main.go and the migration contract forbids touching
+#   sidecar code here. Inside k3d the host is `host.k3d.internal`, NOT
+#   `host.docker.internal`, so the hardcoded name would not resolve. The
+#   `hostAliases` below injects an /etc/hosts entry so `host.docker.internal`
+#   resolves to the host-gateway IP inside this pod, making the unmodified
+#   binary reach the bare-metal daemon. The IP must match the one in
+#   daemon-endpoints.yaml (10.42.0.1, the k3d/k3s default host gateway) — keep
+#   the two in sync. The cleaner long-term fix is to point the poll at the
+#   in-cluster `paling` Service name; that needs a code change and is filed for
+#   follow-up rather than done here.
+# -----------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: paling-sidecar
+  namespace: fleet
+  labels:
+    app.kubernetes.io/name: paling-sidecar
+    app.kubernetes.io/part-of: fleet
+    app.kubernetes.io/component: sidecar
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: paling-sidecar
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: paling-sidecar
+        app.kubernetes.io/part-of: fleet
+        app.kubernetes.io/component: sidecar
+      annotations:
+        # The fleet Prometheus scrapes pods that opt in via these annotations;
+        # /metrics on :9090 carries the paling_poll_* counters and the
+        # error-time-of-day histogram (see sidecar/main.go).
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: /metrics
+    spec:
+      # See the HOST-GATEWAY ASSUMPTION header. This makes the daemon's hardcoded
+      # `host.docker.internal` resolvable inside k3d without a code change. If the
+      # host-gateway IP differs for this cluster, change it here AND in
+      # daemon-endpoints.yaml.
+      hostAliases:
+        - ip: "10.42.0.1"
+          hostnames:
+            - host.docker.internal
+      containers:
+        - name: paling-sidecar
+          # Locally-built image — built from sidecar/Dockerfile, NOT pulled.
+          # Pinned to an explicit tag (never :latest): the primary agent imports
+          # this exact tag into k3d with `k3d image import`, so the cached image
+          # matches and no registry pull happens. Build + tag before apply:
+          #   docker build -t paling-sidecar:v0 ./sidecar
+          #   k3d image import paling-sidecar:v0 -c fleet
+          # Bump the tag deliberately when the sidecar changes; do not float it.
+          image: paling-sidecar:v0
+          # The image is local-only, so never let the kubelet try a registry
+          # pull — that would fail (and waste the throttled link). IfNotPresent
+          # uses the imported image and only pulls if genuinely absent.
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 9090
+              protocol: TCP
+          env:
+            # Kafka emission/consume is best-effort in the sidecar; point it at
+            # the in-cluster brokers. If kafka has not migrated yet these names
+            # may not resolve — the sidecar logs and disables emission, it does
+            # not crash (symmetric emit/consume degradation, see main.go).
+            - name: KAFKA_BROKERS
+              value: kafka:9092
+            - name: SCHEMA_REGISTRY_URL
+              value: http://schema-registry:8081
+            # Inbound orchestration relay target. The poll loop's daemon URL is
+            # hardcoded (handled via hostAliases above); this one is env-driven,
+            # so we set it to the host gateway explicitly. Uses the alias name so
+            # it travels with the same /etc/hosts entry.
+            - name: PALING_DAEMON_ORCHESTRATE_URL
+              value: http://host.docker.internal:8090/orchestrate
+          # /health on :9090 returns 200 once the HTTP server is up. It reflects
+          # the SIDECAR's own liveness, not the bare-metal daemon's — daemon
+          # health is surfaced as the paling_poll_* metrics, deliberately, so a
+          # daemon blip does not get the sidecar killed and restarted.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            # Modest — a poll loop, a metrics endpoint, and a Kafka client on a
+            # laptop cluster.
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop:
+                - ALL
+---
+# In-cluster name for the sidecar's :9090 (metrics + /health + /emit). This is a
+# normal selector-backed Service — unlike the daemon's, it fronts a real pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: paling-sidecar
+  namespace: fleet
+  labels:
+    app.kubernetes.io/name: paling-sidecar
+    app.kubernetes.io/part-of: fleet
+    app.kubernetes.io/component: sidecar
+spec:
+  selector:
+    app.kubernetes.io/name: paling-sidecar
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http
+      protocol: TCP

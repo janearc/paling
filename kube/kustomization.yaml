@@ -1,0 +1,28 @@
+# kustomize entry point for paling in namespace `fleet`.
+#
+# Two halves of the "weird eel":
+#   - daemon-endpoints.yaml  the selector-less Service + manual Endpoints that
+#                            give the BARE-METAL daemon a stable in-cluster name
+#                            (it is not scheduled by k8s; it runs on the host).
+#   - sidecar.yaml           the Go sidecar Deployment + its Service (a normal
+#                            pod-backed service).
+#
+# The `fleet` namespace itself is created by the traefik bring-up (traefik/kube/
+# namespace.yaml), not here — paling lands INTO the existing namespace.
+#
+# Validate offline (no cluster, no apply):
+#   kubectl apply --dry-run=client -k kube/
+#   kubectl kustomize kube/ | kubeconform -strict -ignore-missing-schemas
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: fleet
+
+resources:
+  - daemon-endpoints.yaml
+  - sidecar.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: fleet
+    includeSelectors: false

@@ -1,0 +1,90 @@
+# =============================================================================
+# paling daemon — the bare-metal exception (the "weird eel")
+# =============================================================================
+# `paling serve` runs on the HOST, not in a pod: it needs Apple Silicon's Metal
+# GPU for MLX, which a Linux container cannot reach. So unlike every other fleet
+# service it is NOT a Deployment. We still want in-cluster clients to address it
+# by a stable name, so we model the host process the way Kubernetes models any
+# endpoint it does not schedule itself: a Service with NO selector plus a manual
+# Endpoints record we populate by hand.
+#
+#   in-cluster client  ->  Service `paling` (:8090)  ->  Endpoints  ->  host:8090
+#
+# A selector-less Service tells Kubernetes "I will manage the backends myself";
+# it creates the ClusterIP/DNS name (paling.fleet.svc.cluster.local) but never
+# tries to find pods for it. The Endpoints object, sharing the Service's exact
+# name, supplies the real backend address — here, the host running the daemon.
+#
+# HOST-GATEWAY ASSUMPTION (must hold for this to resolve):
+#   The address below is `host.k3d.internal`, the DNS name k3d injects into the
+#   cluster that resolves to the Docker host (the laptop) running the bare-metal
+#   daemon. This is the in-cluster analogue of `host.docker.internal`, which the
+#   compose-era sidecar used to reach the daemon (see sidecar/main.go).
+#
+#   Endpoints addresses are normally IPs; Kubernetes does accept a hostname here
+#   and resolves it via the cluster's DNS path, but `host.k3d.internal` is only
+#   guaranteed resolvable by k3d's host-gateway injection. If a given k3d build
+#   does NOT inject it, replace `host.k3d.internal` below with the host's LAN IP
+#   (the address the cluster reaches the laptop on) and re-apply. The IP form is
+#   the portable fallback; the hostname is the convenience that survives a DHCP
+#   lease change. Either way the daemon must be listening on :8090 on the host.
+#
+# This file is two objects (Service + Endpoints) that MUST stay name-matched.
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: paling
+  namespace: fleet
+  labels:
+    app.kubernetes.io/name: paling
+    app.kubernetes.io/part-of: fleet
+    app.kubernetes.io/component: daemon
+spec:
+  # No selector. This is the load-bearing line: it makes the Service a stable
+  # name with a ClusterIP but no pod discovery, so the hand-written Endpoints
+  # below is the sole source of backends. Adding a selector here would make
+  # Kubernetes overwrite our manual Endpoints with (empty) pod-derived ones.
+  clusterIP: None # headless: clients resolve straight to the endpoint address,
+                  # no extra ClusterIP hop in front of a single host backend.
+  ports:
+    - name: http
+      port: 8090
+      targetPort: 8090
+      protocol: TCP
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  # MUST equal the Service name above — that name-match is how Kubernetes pairs
+  # a manual Endpoints with its selector-less Service.
+  name: paling
+  namespace: fleet
+  labels:
+    app.kubernetes.io/name: paling
+    app.kubernetes.io/part-of: fleet
+    app.kubernetes.io/component: daemon
+subsets:
+  - addresses:
+      # The bare-metal daemon, reached at the host gateway address.
+      #
+      # An Endpoints `address` REQUIRES a literal `ip:` — the API does not accept
+      # a bare DNS name here (the `hostname:` field is only a supplementary label
+      # on an IP, not a substitute for it). So we cannot literally write
+      # `host.k3d.internal`; we record the gateway IP it stands for.
+      #
+      # 10.42.0.1 below is k3d/k3s's default in-cluster host-gateway IP — the
+      # address `host.k3d.internal` resolves to from inside the cluster, i.e. the
+      # node/host running the bare-metal daemon. CONFIRM IT for this cluster
+      # before relying on it (one-time check, see handoff):
+      #   kubectl run hostgw-check --rm -it --image=busybox --restart=Never -n fleet \
+      #     -- nslookup host.k3d.internal
+      # If it differs (custom k3d network, or you'd rather use the laptop's LAN
+      # IP), replace the `ip:` value here and re-apply — this object is the single
+      # place the host address lives.
+      - ip: 10.42.0.1
+        hostname: host-k3d-internal # supplementary label only; documents intent
+    ports:
+      - name: http
+        port: 8090
+        protocol: TCP

@@ -20,6 +20,23 @@ logger = logging.getLogger(__name__)
 # delightd_architecture.md); override host/port for a remote daemon.
 DEFAULT_DELIGHTD_URL = os.environ.get("PALING_DELIGHTD_URL", "http://localhost:8088")
 
+# delightd reports backend URLs as seen from inside the mesh (e.g. ollama at
+# host.docker.internal), but paling runs bare-metal, where that name does not
+# resolve. rewrite mesh-only hostnames to a bare-metal-reachable host; override
+# the target with PALING_BACKEND_HOST (defaults to loopback).
+_MESH_HOSTS = ("host.docker.internal",)
+
+
+def _reachable_url(url):
+    # map a mesh-internal backend URL to one reachable from the bare-metal daemon.
+    # non-mesh URLs pass through unchanged.
+    if not url:
+        return url
+    host = os.environ.get("PALING_BACKEND_HOST", "127.0.0.1")
+    for m in _MESH_HOSTS:
+        url = url.replace("//" + m + ":", "//" + host + ":").replace("//" + m + "/", "//" + host + "/")
+    return url
+
 
 class ModelUnavailable(RuntimeError):
     # raised when no healthy backend can be resolved for a requested model.
@@ -46,7 +63,8 @@ def resolve_model(model_name, delightd_url=None, timeout=3):
             continue
         for m in src.get("models", []):
             if want in m.lower():
-                return {"provider": src.get("provider"), "url": src.get("url"), "model": m}
+                return {"provider": src.get("provider"),
+                        "url": _reachable_url(src.get("url")), "model": m}
     logger.warning("no healthy delightd provider serves model %r", model_name)
     return None
 

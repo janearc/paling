@@ -126,3 +126,21 @@ def test_generate_seq2seq_uses_cached_backend(monkeypatch):
     assert out == "Q> what is care?"
     assert fake.seen == "context about care"
     modelclient._seq2seq_backends.pop("flan-t5-large", None)
+
+
+def test_resolve_rewrites_mesh_host_to_reachable(monkeypatch):
+    # delightd reports the ollama backend at host.docker.internal (mesh-only);
+    # the bare-metal daemon must get a loopback-reachable URL instead.
+    src = {"provider": "ollama", "url": "http://host.docker.internal:11434",
+           "models": ["mistral:latest"], "healthy": True}
+    monkeypatch.setattr(modelclient.urllib.request, "urlopen",
+                        lambda req, timeout=None: _FakeResp(_discovery([src])))
+    backend = modelclient.resolve_model("mistral")
+    assert backend["url"] == "http://127.0.0.1:11434"
+
+
+def test_reachable_url_env_override_and_passthrough(monkeypatch):
+    monkeypatch.setenv("PALING_BACKEND_HOST", "10.0.0.5")
+    assert modelclient._reachable_url("http://host.docker.internal:11434") == "http://10.0.0.5:11434"
+    # a non-mesh URL is left untouched
+    assert modelclient._reachable_url("http://localhost:11434") == "http://localhost:11434"

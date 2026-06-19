@@ -295,6 +295,31 @@ def main():
         help="Port to run the daemon on"
     )
 
+    # Subcommand: launchagent
+    # manages the per-user launchd job that keeps `paling serve` self-healing and
+    # always-up on bare-metal apple silicon (issue #4). emits json by default.
+    parser_la = subparsers.add_parser(
+        "launchagent",
+        help="Install/uninstall the self-healing launchd agent for `paling serve`",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser_la.add_argument(
+        "la_action",
+        choices=["install", "uninstall", "status"],
+        help="install, uninstall, or report status of the launchd agent"
+    )
+    parser_la.add_argument(
+        "--port",
+        type=int,
+        default=8090,
+        help="Port the supervised daemon should bind"
+    )
+    parser_la.add_argument(
+        "--no-load",
+        action="store_true",
+        help="Write/remove the plist but do not (un)load it into launchd"
+    )
+
     # Subcommand: profile
     parser_prof = subparsers.add_parser(
         "profile",
@@ -492,6 +517,20 @@ def main():
     elif args.command == "serve":
         from paling.daemon import serve
         serve(port=args.port)
+        sys.exit(0)
+
+    elif args.command == "launchagent":
+        import json
+        from paling import launchagent
+
+        if args.la_action == "install":
+            result = launchagent.install(port=args.port, load=not args.no_load)
+        elif args.la_action == "uninstall":
+            result = launchagent.uninstall()
+        else:
+            result = launchagent.status()
+        # json by default (agent-first mandate): the wrapper/skill consumes this.
+        logger.info(json.dumps(result.model_dump(), indent=2))
         sys.exit(0)
 
 if __name__ == "__main__":

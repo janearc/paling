@@ -324,6 +324,21 @@ def answers_bento(bento_id: str):
     return report
 
 
+@app.post("/bento/{bento_id}/curate")
+def curate_bento(bento_id: str):
+    # pipeline stage 6: grade stage-5 answers with the summarization model and
+    # write the curated review under anchors/paling/curated/. gated on stage-5
+    # review existing (409 otherwise).
+    bento_path = Path(_BENTOS_ROOT).expanduser().resolve() / bento_id
+    if not bento_path.is_dir():
+        raise HTTPException(status_code=404, detail=f"bento '{bento_id}' not found")
+    report = bento.curate_review(bento_path)
+    if not report.curated:
+        raise HTTPException(status_code=409, detail=report.issues)
+    producer.emit(bento_id, "curate", BanchanState.IN_PROGRESS)
+    return report
+
+
 def serve(port: int = 8090):
     import uvicorn
     import subprocess

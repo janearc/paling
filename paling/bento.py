@@ -768,3 +768,137 @@ def generate_answers(bento_path) -> AnswersReport:
         bento_id=path.name, generated=True, contexts=contexts,
         questions_answered=answered, answers_total=answers_total,
         attempts_total=attempts_total, model=model, issues=issues)
+
+
+# --- stage 6: curation (pre-human grading) ------------------------------------
+# a stronger model -- the summarization route, a decoder chat model (mistral
+# today) reached via delightd discovery + ollama -- grades each question's
+# candidate answers against the context and synthesizes a best answer. this is
+# the pre-human RLHF pass: it filters and sharpens before a human does final
+# curation, the mechanism that gave the 2024 data its quality. the routed model
+# is swappable; nothing here depends on a specific one.
+
+_CURATION_PROMPT = (
+    "You are grading candidate answers for fine-tuning data curation. Judge only "
+    "against the provided context.\n\nContext:\n{context}\n\nQuestion: {question}\n"
+    "Candidate answers:\n{answers}\n\nRate the best candidate from 1 (useless) to "
+    "5 (excellent, fully grounded in the context). Then write one synthesized best "
+    "answer grounded only in the context. Respond exactly as two lines:\n"
+    "RATING: <1-5>\nSYNTHESIS: <answer>"
+)
+
+# minimum pre-human rating for an entry to be marked approved.
+_CURATION_APPROVE_THRESHOLD = 4
+
+
+# a curated question: the candidates plus the grader's rating, synthesis, and
+# pre-human approval. this is the review.json shape a human then finalizes.
+class CuratedEntry(BaseModel):
+    question: str
+    answers: List[str] = []
+    rating: int = 0
+    synthesis_answer: str = ""
+    approved: bool = False
+
+
+# the curated review record for one context.
+class CuratedReview(BaseModel):
+    context_id: str
+    source_doc: str
+    context: str
+    questions: List[CuratedEntry] = []
+
+
+# typed result of stage-6 curation.
+class CurationReport(BaseModel):
+    bento_id: str
+    curated: bool
+    issues: List[str] = []
+    contexts: int = 0
+    questions_graded: int = 0
+    approved: int = 0
+    model: Optional[str] = None
+
+
+# pull "RATING: N" and "SYNTHESIS: ..." out of the grader's reply.
+def _parse_rating_synthesis(text):
+    # tolerant of surrounding prose; an unparseable rating stays 0 (not approved).
+    rating = 0
+    synth = ""
+    m = re.search(r"RATING:\s*([0-5])", text, re.I)
+    if m:
+        rating = int(m.group(1))
+    m = re.search(r"SYNTHESIS:\s*(.+)", text, re.I | re.S)
+    if m:
+        synth = m.group(1).strip()
+    return rating, synth
+
+
+# stage 6: grade stage-5 answers with the summarization model and write the
+# curated review (rating + synthesis + pre-human approval) for final human curation.
+def curate_review(bento_path) -> CurationReport:
+    # gated on stage-5 review existing (transitively stages 1-2,4). reads
+    # anchors/paling/review/, writes anchors/paling/curated/. fail-closed on model.
+    from paling import modelclient
+
+    path = Path(bento_path).expanduser().resolve()
+    verify = verify_bento(path)
+    if not verify.valid:
+        return CurationReport(
+            bento_id=path.name, curated=False,
+            issues=["verify gate failed; fix the bento and re-verify"] + verify.issues)
+    review_dir = path / "anchors" / "paling" / "review"
+    review_files = sorted(review_dir.glob("*.json")) if review_dir.is_dir() else []
+    if not review_files:
+        return CurationReport(
+            bento_id=path.name, curated=False,
+            issues=["stage-5 review not found; run `paling answers` first"])
+
+    model = (verify.routing or {}).get("summarization", "mistral")
+
+    out_dir = path / "anchors" / "paling" / "curated"
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    contexts = graded = approved_n = 0
+    issues = []
+    # outer loop: one stage-5 review file per context.
+    for rf in review_files:
+        try:
+            rev = json.loads(rf.read_text())
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning("could not read %s (non-fatal): %s", rf.name, e)
+            continue
+        context = rev.get("context", "")
+        entries = []
+        # inner loop: grade each of this context's questions in turn.
+        for q in rev.get("questions", []):
+            question = q.get("question", "")
+            answers = q.get("answers", [])
+            prompt = _CURATION_PROMPT.format(
+                context=context, question=question,
+                answers="\n".join(f"- {a}" for a in answers) or "- (none)")
+            # one model call: grade + synthesize the best answer for this question.
+            try:
+                reply = modelclient.generate(model, prompt)
+            except modelclient.ModelUnavailable as e:
+                issues.append(f"model {model!r} unavailable: {e}")
+                return CurationReport(bento_id=path.name, curated=False,
+                                      issues=issues, model=model)
+            rating, synth = _parse_rating_synthesis(reply)
+            ok = rating >= _CURATION_APPROVE_THRESHOLD
+            graded += 1
+            if ok:
+                approved_n += 1
+            entries.append(CuratedEntry(question=question, answers=answers,
+                                        rating=rating, synthesis_answer=synth, approved=ok))
+        curated = CuratedReview(context_id=rev.get("context_id", rf.stem),
+                                source_doc=rev.get("source_doc", ""),
+                                context=context, questions=entries)
+        _safe_write_json(out_dir / f"{curated.context_id}.json", curated.model_dump())
+        contexts += 1
+
+    return CurationReport(
+        bento_id=path.name, curated=True, contexts=contexts,
+        questions_graded=graded, approved=approved_n, model=model, issues=issues)

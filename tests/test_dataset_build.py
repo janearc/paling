@@ -62,10 +62,42 @@ def test_build_training_data_gated_on_curated(tmp_path):
     bid, bpath = bento.scaffold_bento(tmp_path, name="t")
     (bpath / "raw_data" / "d.md").write_text("# D\n\nbody")
     (bpath / "taxonometry" / "corpus.json").write_text(json.dumps({"thin_documents": []}))
-    # no stage-6 curated output -> gate fails.
+    # no stage-6 curated output and no owner gold -> gate fails.
     report = bento.build_training_data(bpath)
     assert report.built is False
-    assert any("curated review not found" in i for i in report.issues)
+    assert any("curated review or owner gold" in i for i in report.issues)
+
+
+def test_build_training_data_includes_owner_gold_verbatim(tmp_path):
+    # the human RLHF under anchors/owner/ is taken verbatim, with the
+    # {answer, rating} dict answer shape, and merged with curated machine output.
+    bpath = _bento_with_curated(tmp_path, [
+        {"question": "machine q?", "answers": ["m"],
+         "rating": 5, "synthesis_answer": "machine answer", "approved": True},
+    ])
+    odir = bpath / "anchors" / "owner" / "sigil" / "instruction"
+    odir.mkdir(parents=True, exist_ok=True)
+    (odir / "grief-review.json").write_text(json.dumps({
+        "context": "Grief is proof that something mattered.",
+        "questions": [
+            {"question": "what is grief?",
+             "answers": [{"answer": "an evaluative response to loss", "rating": None}],
+             "synthesis_answer": "", "approved": True, "rating": None},
+            {"question": "rejected?",
+             "answers": [{"answer": "no", "rating": None}],
+             "synthesis_answer": "", "approved": False, "rating": None},
+        ],
+    }))
+    report = bento.build_training_data(bpath)
+    assert report.built is True
+    assert report.owner_pairs == 1
+    assert report.pairs == 2  # one owner + one curated
+    contents = (bpath / "output" / "train.jsonl").read_text() + \
+        (bpath / "output" / "valid.jsonl").read_text()
+    recs = [json.loads(l) for l in contents.splitlines() if l.strip()]
+    answers = {r["messages"][1]["content"]: r["messages"][2]["content"] for r in recs}
+    assert answers["what is grief?"] == "an evaluative response to loss"
+    assert answers["machine q?"] == "machine answer"
 
 
 def test_build_training_data_no_approved_pairs(tmp_path):

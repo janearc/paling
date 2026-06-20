@@ -668,6 +668,25 @@ _ANSWER_PROMPT = "{question} Answer based only on this context:\n\n{context}"
 _MAX_ANSWER_ATTEMPTS = 5
 
 
+# the human RLHF gold: reviews a person already curated (under anchors/owner/),
+# keyed by context_id. these are authoritative -- stages 5-6 SKIP a context the
+# owner has reviewed (don't spend a model re-deriving what a human signed off on)
+# and stage 7 emits the owner-approved pairs verbatim. files are named
+# `{context_id}-review.json`; the context_id is the filename stem minus -review.
+def _owner_reviews(path) -> Dict[str, dict]:
+    owner_dir = Path(path) / "anchors" / "owner"
+    if not owner_dir.is_dir():
+        return {}
+    reviews = {}
+    for rf in sorted(owner_dir.glob("**/*-review.json")):
+        cid = rf.stem[: -len("-review")] if rf.stem.endswith("-review") else rf.stem
+        try:
+            reviews[cid] = json.loads(rf.read_text())
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning("could not read owner review %s (non-fatal): %s", rf.name, e)
+    return reviews
+
+
 # one question with its converged candidate answers, awaiting curation.
 class QuestionEntry(BaseModel):
     question: str
@@ -692,6 +711,7 @@ class AnswersReport(BaseModel):
     questions_answered: int = 0
     answers_total: int = 0
     attempts_total: int = 0
+    skipped_owner: int = 0
     model: Optional[str] = None
 
 
@@ -718,18 +738,26 @@ def generate_answers(bento_path) -> AnswersReport:
 
     model = (verify.routing or {}).get("gap_generation", "flan-t5-large")
 
+    # contexts a human already curated under anchors/owner/ are authoritative:
+    # skip them here so a model never re-derives gold (stage 7 emits them verbatim).
+    owner_ids = set(_owner_reviews(path))
+
     out_dir = path / "anchors" / "paling" / "review"
     if out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    contexts = answered = answers_total = attempts_total = 0
+    contexts = answered = answers_total = attempts_total = skipped_owner = 0
     issues = []
     for qf in q_files:
         try:
             cq = json.loads(qf.read_text())
         except (OSError, json.JSONDecodeError) as e:
             logger.warning("could not read %s (non-fatal): %s", qf.name, e)
+            continue
+        cid = cq.get("context_id", qf.stem)
+        if cid in owner_ids:
+            skipped_owner += 1
             continue
         context = cq.get("context", "")
         entries = []
@@ -767,7 +795,8 @@ def generate_answers(bento_path) -> AnswersReport:
     return AnswersReport(
         bento_id=path.name, generated=True, contexts=contexts,
         questions_answered=answered, answers_total=answers_total,
-        attempts_total=attempts_total, model=model, issues=issues)
+        attempts_total=attempts_total, skipped_owner=skipped_owner,
+        model=model, issues=issues)
 
 
 # --- stage 6: curation (pre-human grading) ------------------------------------
@@ -932,6 +961,7 @@ class TrainingDataReport(BaseModel):
     issues: List[str] = []
     contexts: int = 0
     pairs: int = 0
+    owner_pairs: int = 0
     skipped_unapproved: int = 0
     train: int = 0
     valid: int = 0
@@ -953,18 +983,55 @@ def build_training_data(bento_path, val_split=0.1, seed=42) -> TrainingDataRepor
             issues=["verify gate failed; fix the bento and re-verify"] + verify.issues)
     curated_dir = path / "anchors" / "paling" / "curated"
     curated_files = sorted(curated_dir.glob("*.json")) if curated_dir.is_dir() else []
-    if not curated_files:
+    # build from curated machine output and/or human owner gold; need at least one.
+    if not curated_files and not _owner_reviews(path):
         return TrainingDataReport(
             bento_id=path.name, built=False,
-            issues=["stage-6 curated review not found; run `paling curate` first"])
+            issues=["no curated review or owner gold found; run `paling curate` first"])
+
+    def _pair(question, answer):
+        return {"messages": [
+            {"role": "system", "content": _TRAINING_SYSTEM_PROMPT},
+            {"role": "user", "content": question},
+            {"role": "assistant", "content": answer},
+        ]}
 
     records = []
-    contexts = skipped = 0
+    contexts = skipped = owner_pairs = 0
+
+    # the human gold first: anchors/owner/ reviews are taken verbatim. these
+    # contexts were skipped in stages 5-6, so they don't appear in curated/. the
+    # owner answer shape is a list of {answer, rating} dicts, not bare strings.
+    owner_ids = set()
+    for cid, rev in _owner_reviews(path).items():
+        owner_ids.add(cid)
+        contexts += 1
+        for q in rev.get("questions", []):
+            if not q.get("approved", False):
+                skipped += 1
+                continue
+            question = (q.get("question") or "").strip()
+            answer = (q.get("synthesis_answer") or "").strip()
+            if not answer:
+                cands = q.get("answers") or []
+                first = cands[0] if cands else ""
+                raw = first.get("answer") if isinstance(first, dict) else first
+                answer = (raw or "").strip()
+            if not question or not answer:
+                skipped += 1
+                continue
+            records.append(_pair(question, answer))
+            owner_pairs += 1
+
     for cf in curated_files:
         try:
             cur = json.loads(cf.read_text())
         except (OSError, json.JSONDecodeError) as e:
             logger.warning("could not read %s (non-fatal): %s", cf.name, e)
+            continue
+        # a curated context that also has owner gold would be a double-count; the
+        # owner version wins (stages 5-6 should already have skipped it).
+        if cur.get("context_id", cf.stem) in owner_ids:
             continue
         contexts += 1
         # keep only entries the curator (and ultimately a human) approved.
@@ -980,11 +1047,7 @@ def build_training_data(bento_path, val_split=0.1, seed=42) -> TrainingDataRepor
             if not question or not answer:
                 skipped += 1
                 continue
-            records.append({"messages": [
-                {"role": "system", "content": _TRAINING_SYSTEM_PROMPT},
-                {"role": "user", "content": question},
-                {"role": "assistant", "content": answer},
-            ]})
+            records.append(_pair(question, answer))
 
     if not records:
         return TrainingDataReport(
@@ -1006,5 +1069,5 @@ def build_training_data(bento_path, val_split=0.1, seed=42) -> TrainingDataRepor
 
     return TrainingDataReport(
         bento_id=path.name, built=True, contexts=contexts, pairs=len(records),
-        skipped_unapproved=skipped, train=len(train_recs), valid=len(valid_recs),
-        out_dir=str(out_dir))
+        owner_pairs=owner_pairs, skipped_unapproved=skipped,
+        train=len(train_recs), valid=len(valid_recs), out_dir=str(out_dir))

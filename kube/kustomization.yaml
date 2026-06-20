@@ -1,9 +1,10 @@
 # kustomize entry point for paling in namespace `fleet`.
 #
 # Two halves of the "weird eel":
-#   - daemon-endpoints.yaml  the selector-less Service + manual Endpoints that
-#                            give the BARE-METAL daemon a stable in-cluster name
-#                            (it is not scheduled by k8s; it runs on the host).
+#   - daemon-service.yaml    an ExternalName Service CNAMEing the stable cluster
+#                            name to the host gateway (host.k3d.internal) for the
+#                            BARE-METAL daemon (it runs on the host, not scheduled
+#                            by k8s; no host IP baked in).
 #   - sidecar.yaml           the Go sidecar Deployment + its Service (a normal
 #                            pod-backed service).
 #
@@ -19,7 +20,7 @@ kind: Kustomization
 namespace: fleet
 
 resources:
-  - daemon-endpoints.yaml
+  - daemon-service.yaml
   - sidecar.yaml
 
 labels:

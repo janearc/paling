@@ -65,7 +65,11 @@ const (
 	orchestrationGroup = "paling-sidecar"
 	subjectHeartbeat   = "observability.v1.ServiceHealthHeartbeat"
 	subjectBanchan     = "paling.events.v1.BanchanLifecycleEvent"
-	daemonOrchestrate  = "http://host.docker.internal:8090/orchestrate"
+	// defaultDaemonBase is the bare-metal `paling serve` daemon's base URL as seen
+	// from inside the cluster. host.k3d.internal is the name k3d injects into
+	// CoreDNS for the host gateway; it resolves to the host at runtime, so no host
+	// IP is baked in. Override with PALING_DAEMON_BASE (a different name or a LAN IP).
+	defaultDaemonBase = "http://host.k3d.internal:8090"
 )
 
 var startTime = time.Now()
@@ -216,13 +220,13 @@ func doWithRetries(operation func() error) error {
 // The previous registerWithDelightd() POSTed to a nonexistent route on the wrong
 // port and was dead code; it has been removed in favour of the real mechanisms.
 
-func pollPaling() {
+func pollPaling(base string) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
 		err := doWithRetries(func() error {
-			resp, err := http.Get("http://host.docker.internal:8090/health")
+			resp, err := http.Get(base + "/health")
 			if err != nil {
 				return err
 			}
@@ -253,8 +257,11 @@ func main() {
 	// the removed registerWithDelightd above.
 	log.Info("discovery is declarative", "mechanisms", "traefik docker labels + daemon file-route + mcp.json", "runtime_registration", false)
 
-	// Polling loop
-	go pollPaling()
+	// Polling loop against the bare-metal daemon over the host boundary. The base
+	// URL resolves the host gateway by name (host.k3d.internal), so no host IP is
+	// baked in; PALING_DAEMON_BASE overrides it.
+	daemonBase := getenv("PALING_DAEMON_BASE", defaultDaemonBase)
+	go pollPaling(daemonBase)
 
 	// Kafka emission (best-effort): the sidecar is paling's only producer, so
 	// no Python touches Kafka/Schema-Registry/protobuf. A failure here disables
@@ -276,7 +283,7 @@ func main() {
 	// Kafka and relay them to the bare-metal daemon. A down broker disables
 	// inbound control but never stops the sidecar -- symmetric with emission.
 	brokers := strings.Split(getenv("KAFKA_BROKERS", "kafka:9092"), ",")
-	daemonOrchestrateURL := getenv("PALING_DAEMON_ORCHESTRATE_URL", daemonOrchestrate)
+	daemonOrchestrateURL := getenv("PALING_DAEMON_ORCHESTRATE_URL", daemonBase+"/orchestrate")
 	if cons, err := consume.New(emitCtx, brokers, topicOrchestration, orchestrationGroup, daemonOrchestrateURL); err != nil {
 		log.Warn("kafka orchestration consumer disabled", "err", err)
 	} else {

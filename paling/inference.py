@@ -23,6 +23,7 @@ import traceback
 from pathlib import Path
 from typing import List, Dict, Optional
 from mlx_lm import load, stream_generate
+from mlx_lm.sample_utils import make_sampler
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +144,7 @@ class ChatSession:
                     self.tokenizer,
                     prompt=prompt,
                     max_tokens=max_tokens,
-                    temp=temp
+                    sampler=make_sampler(temp=temp)
                 ):
                     sys.stdout.write(str(response.text)); sys.stdout.flush()
                     response_text += response.text

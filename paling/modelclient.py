@@ -21,10 +21,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_DELIGHTD_URL = os.environ.get("PALING_DELIGHTD_URL", "http://localhost:8088")
 
 # delightd reports backend URLs as seen from inside the mesh (e.g. ollama at
-# host.docker.internal), but paling runs bare-metal, where that name does not
-# resolve. rewrite mesh-only hostnames to a bare-metal-reachable host; override
-# the target with PALING_BACKEND_HOST (defaults to loopback).
-_MESH_HOSTS = ("host.docker.internal",)
+# host.docker.internal under compose, or host.k3d.internal under k3d), but paling
+# runs bare-metal, where those cluster/mesh names do not resolve. rewrite the
+# mesh-only hostnames to a bare-metal-reachable host (loopback, since the model
+# backends run on the same host); override with PALING_BACKEND_HOST.
+_MESH_HOSTS = ("host.docker.internal", "host.k3d.internal")
 
 
 def _reachable_url(url):

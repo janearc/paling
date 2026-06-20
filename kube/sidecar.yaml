@@ -56,7 +56,10 @@ spec:
       # host-gateway IP differs for this cluster, change it here AND in
       # daemon-endpoints.yaml.
       hostAliases:
-        - ip: "10.42.0.1"
+        # 192.168.5.2 = host.k3d.internal = the macOS host (colima gateway) where
+        # paling serve runs. Keep in sync with daemon-endpoints.yaml. (10.42.0.1,
+        # the node's pod-gateway, refuses :8090 — it is not the Mac.)
+        - ip: "192.168.5.2"
           hostnames:
             - host.docker.internal
       containers:

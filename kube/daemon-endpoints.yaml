@@ -73,16 +73,16 @@ subsets:
       # on an IP, not a substitute for it). So we cannot literally write
       # `host.k3d.internal`; we record the gateway IP it stands for.
       #
-      # 10.42.0.1 below is k3d/k3s's default in-cluster host-gateway IP — the
-      # address `host.k3d.internal` resolves to from inside the cluster, i.e. the
-      # node/host running the bare-metal daemon. CONFIRM IT for this cluster
-      # before relying on it (one-time check, see handoff):
+      # 192.168.5.2 is what `host.k3d.internal` resolves to from inside this
+      # cluster — the macOS host (via colima/lima's gateway) where the bare-metal
+      # `paling serve` daemon runs. Confirmed in-cluster:
       #   kubectl run hostgw-check --rm -it --image=busybox --restart=Never -n fleet \
-      #     -- nslookup host.k3d.internal
-      # If it differs (custom k3d network, or you'd rather use the laptop's LAN
-      # IP), replace the `ip:` value here and re-apply — this object is the single
-      # place the host address lives.
-      - ip: 10.42.0.1
+      #     -- nslookup host.k3d.internal      # -> 192.168.5.2
+      # NOTE: the pod-network default gateway (10.42.0.1) is the NODE, not the
+      # Mac, and refuses :8090 — do not use it here. If colima's gateway changes,
+      # re-run the check and update this one line; this object is the single place
+      # the host address lives.
+      - ip: 192.168.5.2
         hostname: host-k3d-internal # supplementary label only; documents intent
     ports:
       - name: http

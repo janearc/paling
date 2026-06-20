@@ -79,17 +79,27 @@ def generate(model_name, prompt, delightd_url=None, timeout=120, **opts):
     if backend is None:
         raise ModelUnavailable(f"no backend serves model {model_name!r} (is delightd up?)")
 
-    payload = {"model": backend["model"], "prompt": prompt, "stream": False}
+    # use the CHAT endpoint, not raw /api/generate: ollama applies the model's
+    # chat template (jinja) to the messages, which is what makes an instruct/chat
+    # model actually follow the prompt. raw completion bypasses the template, and
+    # an instruct model handed a naked string just stops (empty output). an
+    # optional `system` opt sets the system turn; everything else passes through.
+    system = opts.pop("system", None)
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    payload = {"model": backend["model"], "messages": messages, "stream": False}
     payload.update(opts)
     req = urllib.request.Request(
-        backend["url"].rstrip("/") + "/api/generate",
+        backend["url"].rstrip("/") + "/api/chat",
         data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=timeout) as r:
         data = json.loads(r.read())
-    return data.get("response", "")
+    return (data.get("message") or {}).get("content", "")
 
 
 # --- seq2seq (encoder-decoder) provider --------------------------------------

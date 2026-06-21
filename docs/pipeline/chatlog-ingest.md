@@ -10,8 +10,10 @@ share HTML  --[stage 1: extractor]-->  messages-JSON  --[stage 2: paling]-->  ch
 
 ## Stage 1 — extractor (upstream, archaea)
 
-`archaea/whole/tooling/openai-chatlog-extract/chatgpt-logextract.py` parses
-OpenAI's obfuscated share HTML into a messages-JSON document:
+`archaea/whole/tooling/openai-chatlog-extract/chatgpt-logextract.py` parses the
+share HTML into a messages-JSON document. The HTML is not obfuscated so much as
+minified and mangled — there is no clean structure to parse, just a build
+artifact we reverse-engineer:
 
 ```json
 {
@@ -33,8 +35,12 @@ Run it against a saved share page (or URL):
 chatgpt-logextract.py --from saved-share.html --out session-001.json
 ```
 
-The share HTML is obfuscated and the upstream format drifts, so the extractor
-output is deliberately messy. Stage 2 cleans it up.
+The share-HTML format is unstable and changes without notice, and there is no
+stable programmatic export of your own logs — clicking "share" and then curling
+the resulting page is the only realistic input. The extractor is therefore
+best-effort: it works against the format as it stands today and **will** need
+updates when that format shifts. Its output is messy by nature; stage 2 cleans
+it up.
 
 ## Stage 2 — paling (this repo)
 
@@ -101,6 +107,13 @@ So even if every byte arrives already cleaned, paling runs its own
 horizontal ellipsis (`…` → `...`), the non-breaking space (` ` → space),
 and the common UTF-8-as-Latin-1 mojibake (`â€"` em-dash, `â€"` en-dash, `â€¦`
 ellipsis, smart-quote variants).
+
+**Emoji are kept on purpose.** The normalization only repairs the two
+known-broken forms above (smart punctuation and mojibake). It does **not**
+blanket-strip non-ascii. Stripping everything that isn't plain ascii would be
+simpler, but models — ChatGPT especially — speak in emoji, and those emoji
+carry signal. Throwing them away loses meaning, so every non-ascii character
+that isn't a repaired form (emoji included) passes through untouched.
 
 ### Privacy
 

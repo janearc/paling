@@ -1,52 +1,10 @@
-"""Second-stage ingest for ChatGPT-share chatlogs.
+"""Second-stage ingest: ChatGPT-share chatlogs -> paling chat training data.
 
-This is the second hop of a two-stage pipeline:
-
-  stage 1  (upstream, already exists)
-    archaea/whole/tooling/openai-chatlog-extract/chatgpt-logextract.py
-    parses OpenAI's obfuscated "share this chat" HTML into a messages-JSON:
-        {"messages": {guid: {raw, extracted, authors, timestamp, host}}}
-
-  stage 2  (this module)
-    messages-JSON -> paling chat training data
-        - a CHARACTER dataset (the target/quell side), standard chat data
-        - a PAINTER dataset (preceding assistant context -> the host/user turn)
-
-The extractor's output is messy by nature -- the share HTML is obfuscated and
-the upstream spec drifts. The rules below were reverse-engineered against real
-extractor output (the quell logs) and must be followed exactly:
-
-  * Walk ``messages`` in DICT INSERTION ORDER. It is a dict keyed by UUID, not
-    a list. Do NOT sort by ``timestamp`` -- timestamps are non-monotonic.
-  * Use ``extracted`` for text. Ignore ``raw`` (truncated garbage) and
-    ``authors`` (a decoy counter, not a role).
-  * Role comes from ``host``:
-        host is None      -> assistant (the character/target)
-        host is present   -> user      (the painter)
-    EXCEPTION: the first substantial host-present entry is the SYSTEM PROMPT
-    (role=system).
-  * Drop the literal "Original custom instructions no longer available" marker.
-  * Drop junk rows whose ``extracted.strip()`` is shorter than ~20 chars
-    (telemetry crumbs) -- but ONLY when ``host`` is None. Telemetry crumbs are
-    always host-less; a short host-PRESENT row is a real painter jab ("cut the
-    shit") and is the highest-signal painter data, so it is always kept.
-  * Merge consecutive same-role turns. A single assistant reply sometimes
-    streams as two adjacent ``host is None`` rows; concatenate them.
-  * Unicode-normalize mojibake (see ``normalize_punctuation`` below).
-
-Normalization contract (separation of duties): paling ALWAYS normalizes text
-its own way, regardless of what the upstream extractor or a bento-builder did.
-Those layers may normalize too -- that is fine -- but paling re-normalizes
-unconditionally. paling owns the canonical form of its own training data; it
-does not trust an upstream's normalization to match paling's table. This is a
-deliberate decision (Max), not redundant work: the upstream table drifts, and
-paling's table is maintained independently to be correct for paling's corpus.
-
-The character dataset is ``[system, user, assistant, user, assistant, ...]``
-per session. The painter dataset carries the FULL running conversation in the
-painter's frame (roles inverted): the character's words become ``user`` context
-and the painter's words become the ``assistant`` target, so the painter can
-learn multi-turn escalation rather than a single isolated reaction.
+Stage 1 (upstream, in archaea) scrapes a "share this chat" page into a
+messages-JSON blob. This module is stage 2: it turns that blob into two
+datasets -- a CHARACTER dataset (the assistant/target side) and a PAINTER
+dataset (the human/prompter side). The per-message parsing rules are
+reverse-engineered from real logs and explained inline at each step below.
 """
 
 import json
@@ -63,13 +21,21 @@ MIN_TURN_CHARS = 20
 # instructions are not recoverable. It is not dialogue; drop it.
 CUSTOM_INSTRUCTIONS_MARKER = "Original custom instructions no longer available"
 
-# paling's OWN punctuation/mojibake normalization table. This started as a copy
-# of chatgpt-logextract.py's normalize_punctuation but is now maintained
-# independently: paling owns the canonical form of its training data and
-# re-normalizes regardless of upstream (see module docstring). Order in the
-# dict matters only insofar as multi-byte mojibake keys must be replaced before
-# their single-character counterparts -- here they are disjoint, so order is
-# irrelevant.
+# This table fixes TWO kinds of broken text and nothing else:
+#   1. smart punctuation (curly quotes, em/en dashes, ellipsis) -> plain ascii
+#   2. "mojibake" -- UTF-8 bytes that got misread as Latin-1, so a single
+#      character like an em-dash comes through as gibberish; we map those byte
+#      soups back to the ascii character they were meant to be.
+#
+# POLICY (deliberate, Max): we DO NOT blanket-strip non-ascii. It is tempting to
+# just throw away everything that isn't plain ascii, but models -- ChatGPT
+# especially -- talk in emoji, and those emoji carry real signal. Stripping them
+# would lose meaning. So we only repair the known-broken forms above and leave
+# every other non-ascii character (emoji included) untouched.
+#
+# paling owns this table and applies it to its own data unconditionally, even if
+# an upstream tool already normalized -- paling does not trust upstream to match
+# paling's canonical form (see "Normalization is paling's job" in the doc).
 _PUNCT_REPLACEMENTS = {
     # Smart punctuation -> ascii.
     "\u2014": "--",      # em-dash
@@ -95,48 +61,51 @@ _PUNCT_REPLACEMENTS = {
 
 
 def normalize_punctuation(text: str) -> str:
-    """Normalize mojibake and smart punctuation to paling's canonical ascii form.
-
-    paling owns this table and applies it unconditionally; see the module
-    docstring for the separation-of-duties contract.
-    """
+    """Repair smart punctuation and mojibake to ascii; leave emoji alone."""
+    # Apply each repair from the table above, in order.
     for k, v in _PUNCT_REPLACEMENTS.items():
         text = text.replace(k, v)
+    # The scrape sometimes leaves a literal backslash-n instead of a real
+    # newline; turn it back into an actual line break.
     return text.replace("\\n", "\n")
 
 
 def parse_chatlog_messages(messages: Dict[str, Dict[str, Any]]) -> List[Dict[str, str]]:
-    """Turn an extractor messages-dict into an ordered list of chat turns.
-
-    Returns ``[{"role": ..., "content": ...}, ...]`` in conversation order,
-    starting with the system prompt (if present), then alternating
-    user/assistant with consecutive same-role turns merged.
-
-    ``messages`` is the value under the ``messages`` key of the extractor's
-    output. Insertion order is authoritative.
-    """
+    """Turn the scraped messages-dict into an ordered [{"role", "content"}] list."""
+    # IMPORTANT: walk the dict in INSERTION ORDER, which is the real
+    # conversation order. The "timestamp" field looks tempting but is
+    # non-monotonic garbage -- do not sort by it.
     turns: List[Dict[str, str]] = []
+    # We only learn who said something from "host". The very first host-said
+    # thing turns out to be the system prompt; this flag tracks whether we've
+    # already claimed it.
     system_assigned = False
 
     for entry in messages.values():
+        # Use the cleaned "extracted" text. "raw" is truncated junk and
+        # "authors" is a decoy counter (not a real role) -- both ignored.
         extracted = entry.get("extracted") or ""
         text = normalize_punctuation(extracted).strip()
         host = entry.get("host")
 
-        # Drop truly-empty text regardless of host.
+        # Empty after stripping -> nothing to keep.
         if not text:
             continue
-        # Apply the telemetry-crumb length floor ONLY to host-less rows.
-        # Painter turns (host present) are always kept even when short: a
-        # 12-char "cut the shit" is the highest-signal painter data, not a
-        # telemetry crumb. Telemetry crumbs are always host-less.
+        # Tiny rows are usually telemetry crumbs ("status"), not dialogue, so we
+        # drop them -- BUT only when host is empty. A short row WITH a host is a
+        # real human jab like "cut the shit": that is the highest-signal painter
+        # data, so host-present rows are kept no matter how short.
         if host is None and len(text) < MIN_TURN_CHARS:
             continue
+        # A placeholder the scraper leaves when it can't recover the real system
+        # prompt; it isn't dialogue, drop it.
         if CUSTOM_INSTRUCTIONS_MARKER in text:
             continue
 
+        # Assign the role. host present + none claimed yet = the system prompt;
+        # host present afterwards = the human (painter/"user"); no host = the
+        # model (character/"assistant").
         if host is not None and not system_assigned:
-            # First substantial host-present entry is the system prompt.
             role = "system"
             system_assigned = True
         elif host is None:
@@ -144,8 +113,9 @@ def parse_chatlog_messages(messages: Dict[str, Dict[str, Any]]) -> List[Dict[str
         else:
             role = "user"
 
-        # Merge consecutive same-role turns (e.g. a streamed assistant reply
-        # split across two host==None rows).
+        # A single reply sometimes arrives split across two rows. If this row is
+        # the same role as the previous turn, glue it onto that turn instead of
+        # starting a new one (but never merge into the system prompt).
         if turns and turns[-1]["role"] == role and role != "system":
             turns[-1]["content"] = turns[-1]["content"] + "\n\n" + text
         else:
@@ -171,21 +141,17 @@ def character_records(
     turns: List[Dict[str, str]],
     system_prompt: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Build CHARACTER (target/quell side) chat training records.
-
-    One record per session: ``{"messages": [system, user, assistant, ...]}``.
-
-    If the session carries no system turn and ``system_prompt`` is supplied, it
-    is prepended so the record always leads with a system message.
-    """
+    """Build the CHARACTER side: one chat record per session, [system, user, ...]."""
     if not turns:
         return []
 
     messages = list(turns)
+    # Always lead with a system message. If the log had none and the caller
+    # gave us a fallback prompt, stick it on the front.
     if messages[0]["role"] != "system" and system_prompt:
         messages = [{"role": "system", "content": system_prompt}] + messages
 
-    # A record needs at least one user/assistant exchange to be useful.
+    # A lone system message with no actual exchange is useless training data.
     if not any(m["role"] in ("user", "assistant") for m in messages):
         return []
 
@@ -193,29 +159,14 @@ def character_records(
 
 
 def painter_records(turns: List[Dict[str, str]]) -> List[Dict[str, Any]]:
-    """Build PAINTER records carrying the full running conversation.
-
-    The painter's skill is multi-turn escalation ("you've dodged me, push
-    harder"), so each painter turn is emitted with the ENTIRE prior conversation
-    as context -- not just the immediately-preceding assistant turn. The frame
-    is inverted into the painter's point of view:
-
-      * a ``system`` turn stays ``system``;
-      * a character (``assistant``) turn becomes a ``user`` turn -- the
-        character's words are the painter's context;
-      * a painter (``user``) turn becomes the ``assistant`` target.
-
-    For each painter turn we emit ``{"messages": history + [painter as
-    assistant]}``, then fold that painter turn into the running history (as an
-    ``assistant`` turn) so later examples see it. A painter turn is skipped ONLY
-    when the history is genuinely empty (nothing to react to). When a system
-    prompt is present the history is never empty, so a leading painter turn (the
-    opener) IS emitted as ``[system] + [opener-as-assistant]`` -- it is no longer
-    dropped.
-
-    No windowing: sessions are short and we carry full history. Windowing is a
-    deferred follow-up.
-    """
+    """Build the PAINTER side: each human turn as a target, with full prior history."""
+    # We want the painter (the human) to learn multi-turn escalation -- "you
+    # dodged me, push harder" -- so every painter turn is trained WITH the whole
+    # conversation so far, not just the last reply. To do that we flip the frame
+    # into the painter's point of view: the model's words become the "user"
+    # context and the painter's words become the "assistant" target we predict.
+    # (No windowing -- sessions are short so we carry the full history. Windowing
+    # is a deferred follow-up.)
     records: List[Dict[str, Any]] = []
     history: List[Dict[str, str]] = []
 
@@ -223,21 +174,28 @@ def painter_records(turns: List[Dict[str, str]]) -> List[Dict[str, Any]]:
         role = turn["role"]
         content = turn["content"]
         if role == "system":
+            # System prompt stays as-is at the front of the history.
             history.append({"role": "system", "content": content})
         elif role == "assistant":
-            # The character's words are the painter's context.
+            # The character spoke; in the painter's frame that is context, so
+            # it goes into history as a "user" turn.
             history.append({"role": "user", "content": content})
         elif role == "user":
+            # A painter turn. Skip it ONLY if there is literally nothing before
+            # it to react to (e.g. a log that opens on the human with no system
+            # prompt). If a system prompt is present, history isn't empty, so
+            # even the opening painter line is emitted.
             if not history:
-                # Degenerate: a painter turn with no prior context at all.
                 continue
+            # Emit one training record: everything so far + this painter turn as
+            # the assistant target.
             records.append({
                 "messages": list(history) + [
                     {"role": "assistant", "content": content},
                 ]
             })
-            # Fold this painter turn into the running history so later examples
-            # carry it as prior conversation.
+            # Then fold this painter turn into the running history so the NEXT
+            # painter turn sees it as prior conversation.
             history.append({"role": "assistant", "content": content})
 
     return records

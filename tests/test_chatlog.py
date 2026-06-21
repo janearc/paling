@@ -1,9 +1,8 @@
-"""Tests for the second-stage chatlog ingest (extractor JSON -> chat data).
-
-The fixtures here are SMALL SYNTHETIC stand-ins for the upstream extractor's
-output. The real quell logs are private and are never committed; these only
-exercise the parsing rules.
-"""
+# Tests for the second-stage chatlog ingest (scraped JSON -> chat training data).
+#
+# The fixtures below are small SYNTHETIC stand-ins for the scraper's output --
+# real chatlogs are private and never committed, so these exercise the parsing
+# rules only, not real data.
 
 import json
 from pathlib import Path
@@ -25,11 +24,9 @@ def _entry(extracted, host=None, timestamp=None):
 
 
 def _synthetic_messages():
-    """A synthetic extractor messages-dict covering every rule.
-
-    Insertion order is authoritative; timestamps are deliberately
-    non-monotonic to prove they are not used for ordering.
-    """
+    # A synthetic messages-dict that covers every parsing rule. Insertion order
+    # is the real conversation order; the timestamps are deliberately
+    # non-monotonic to prove the parser does NOT sort by them.
     return {
         # telemetry crumbs (too short) -> dropped
         "00000000-0000-0000-0000-000000000001": _entry("status", timestamp=900.0),

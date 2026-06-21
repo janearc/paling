@@ -207,30 +207,36 @@ def _write_split(
     seed: int,
     label: str,
 ) -> Tuple[int, int]:
-    """Shuffle, split, and write a record list into its OWN subdir.
-
-    Writes ``<output_path>/<label>/train.jsonl`` and ``valid.jsonl`` so each
-    dataset lands in a self-contained directory with standard names that
-    ``paling train --data <output_path>/<label>`` can consume directly.
-    """
+    """Shuffle one record list, split into train/valid, write both into out/<label>/."""
+    # Nothing to write.
     if not records:
         return 0, 0
 
+    # Shuffle with a fixed seed so the same inputs always split the same way
+    # (reproducible datasets).
     shuffled = list(records)
     rng = random.Random(seed)
     rng.shuffle(shuffled)
 
+    # Cut the list into train (the front) and valid (the tail). e.g. val_split
+    # of 0.1 keeps 90% for training.
     split_idx = int(len(shuffled) * (1 - val_split))
     train_records = shuffled[:split_idx]
     val_records = shuffled[split_idx:]
+    # Edge case: if rounding left valid empty but we have more than one record,
+    # peel off the last one so valid is never empty when it could be non-empty.
     if not val_records and len(shuffled) > 1:
         train_records = shuffled[:-1]
         val_records = shuffled[-1:]
 
+    # Each dataset gets its own subdir with the standard train.jsonl/valid.jsonl
+    # names, so `paling train --data out/<label>` just works.
     split_dir = output_path / label
     split_dir.mkdir(parents=True, exist_ok=True)
     train_file = split_dir / "train.jsonl"
     valid_file = split_dir / "valid.jsonl"
+    # Write one JSON object per line (JSONL). ensure_ascii=False keeps emoji and
+    # other non-ascii readable instead of escaping them to \uXXXX.
     with open(train_file, "w", encoding="utf-8") as f:
         for rec in train_records:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -253,41 +259,22 @@ def build_chatlog_datasets(
     system_prompt: Optional[str] = None,
     skip_bad: bool = False,
 ) -> Dict[str, Tuple[int, int]]:
-    """Build CHARACTER and PAINTER datasets from extractor messages-JSON.
+    """Read a dir of scraped chatlog JSON and write the CHARACTER + PAINTER datasets.
 
-    This is the second hop of the chatlog pipeline. The first hop is the
-    upstream extractor (chatgpt-logextract.py) which turns OpenAI's obfuscated
-    share HTML into ``{"messages": {guid: {...}}}`` JSON. This consumes every
-    ``*.json`` file under ``input_dir`` and emits two datasets, each in its own
-    subdir of ``output_dir``:
-
-      * CHARACTER (target/quell side) -- standard chat training data, one
-        record per session: ``[system, user, assistant, ...]``.
-        Written to ``<output_dir>/character/{train,valid}.jsonl``.
-      * PAINTER -- ``(preceding assistant context -> painter turn)`` pairs,
-        because every host-present turn is the reactive "painter."
-        Written to ``<output_dir>/painter/{train,valid}.jsonl``.
-
-    Each subdir uses standard ``train.jsonl`` / ``valid.jsonl`` names so
-    ``paling train --data <output_dir>/character`` (or ``/painter``) consumes
-    them directly.
-
-    Failure policy: a per-file parse failure is recorded and warned. After the
-    loop, if any file failed and ``skip_bad`` is False, this RAISES rather than
-    silently training on partial data. Set ``skip_bad=True`` to skip-and-warn
-    instead. Either way a ``manifest.json`` is written into ``output_dir``
-    recording per-file counts and dataset paths, so what landed in the datasets
-    is always explicit and auditable.
-
-    See ``paling.chatlog`` for the reverse-engineered parsing rules. Returns
-    ``{label: (n_train, n_valid)}``.
+    This is stage 2 of the chatlog pipeline (see docs/pipeline/chatlog-ingest.md).
+    Reads every *.json file in input_dir, builds two datasets in their own subdirs
+    of output_dir (character/ and painter/), writes a manifest, and returns
+    {label: (n_train, n_valid)}. By default a single unparseable file aborts the
+    whole build; pass skip_bad=True to skip bad files and keep going.
     """
+    # Imported here (not at module top) to avoid a circular import.
     from paling import chatlog
 
     input_path = Path(input_dir)
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
+    # Accept either a single file or a directory of *.json files.
     if input_path.is_file():
         json_files = [input_path]
     else:
@@ -297,6 +284,8 @@ def build_chatlog_datasets(
 
     logger.info(f"Found {len(json_files)} chatlog JSON file(s).")
 
+    # Accumulators: the two datasets we're building, the files that failed to
+    # parse, and a per-file count for the manifest.
     character_records: List[Dict[str, Any]] = []
     painter_records: List[Dict[str, Any]] = []
 
@@ -304,6 +293,8 @@ def build_chatlog_datasets(
     per_file: List[Dict[str, Any]] = []
 
     for jf in json_files:
+        # Parse one file into turns. Record the failure and move on rather than
+        # crashing mid-loop -- we decide what to do about failures after.
         try:
             turns = chatlog.load_chatlog(jf)
         except Exception as e:
@@ -311,11 +302,13 @@ def build_chatlog_datasets(
             failed.append({"file": str(jf), "error": str(e)})
             continue
 
+        # Build both datasets from the same turns and append to the running totals.
         char_recs = chatlog.character_records(turns, system_prompt)
         pair_recs = chatlog.painter_records(turns)
         character_records.extend(char_recs)
         painter_records.extend(pair_recs)
 
+        # Note what this file contributed, for the manifest.
         entry = {
             "file": str(jf),
             "turns": len(turns),
@@ -338,15 +331,19 @@ def build_chatlog_datasets(
             f"(pass skip_bad=True to skip these):\n{names}"
         )
 
+    # Nothing usable came out of any file -> there's no dataset to write.
     if not character_records and not painter_records:
         raise ValueError("No chatlog records generated. Check inputs.")
 
     logger.info("Chatlog dataset creation complete:")
+    # Shuffle/split/write each dataset into its own subdir; keep the counts.
     results = {
         "character": _write_split(character_records, output_path, val_split, seed, "character"),
         "painter": _write_split(painter_records, output_path, val_split, seed, "painter"),
     }
 
+    # Write a manifest next to the datasets recording exactly what went in, what
+    # failed, and where each split landed -- so a build is always auditable.
     manifest = {
         "input_dir": str(input_path),
         "output_dir": str(output_path),
@@ -385,13 +382,10 @@ def build_datasets(
     rlhf_dir: Optional[str] = None,
     taxonometry_dir: Optional[str] = None
 ) -> Tuple[int, int]:
-    """
-    Processes markdown files, RLHF data, and taxonometry profiles to build train/validation JSONL datasets.
-
-    The ``chatlog`` mode is dispatched to ``build_chatlog_datasets``: it consumes
-    extractor messages-JSON instead of markdown and writes two paired datasets
-    (character + painter). The returned tuple is the combined train/valid totals.
-    """
+    """Build train/validation JSONL datasets from markdown, RLHF data, and taxonometry."""
+    # The "chatlog" mode is a different beast: it reads scraped chatlog JSON
+    # (not markdown) and writes two paired datasets via build_chatlog_datasets.
+    # Hand it off, sum the per-dataset counts, and return the combined totals.
     if mode == "chatlog":
         results = build_chatlog_datasets(
             input_dir=input_dir,

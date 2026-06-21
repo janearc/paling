@@ -24,6 +24,28 @@ pipeline. Both ship from this repo.
 
 ---
 
+## At a glance
+
+The everyday path, start to finish:
+
+```bash
+# 1. markdown → dataset
+paling prepare --input-dir ./notes --output-dir data --mode sections
+
+# 2. train a LoRA adapter on a 4-bit base model
+paling train --model mlx-community/Llama-3.2-3B-Instruct-4bit --data data --adapter-path adapters
+
+# 3. chat with the result
+paling chat --model mlx-community/Llama-3.2-3B-Instruct-4bit --adapter-path adapters
+
+# 4. (optional) fuse the adapter into standalone weights
+paling fuse --model mlx-community/Llama-3.2-3B-Instruct-4bit --adapter-path adapters --save-path fused_model
+```
+
+Each step is detailed below; `paling <command> --help` lists every flag.
+
+---
+
 ## Why MLX
 
 On macOS the usual CUDA-oriented stack (`bitsandbytes` NF4 quantization, the
@@ -307,5 +329,5 @@ VISION/             # forward-looking architecture notes
 
 max toegang &lt;max.toegang@ftml.net&gt;
 
-🤖 README drafted with Claude (claude-opus-4-8)
-🤖 bespoke, locally trained models
+- 🤖 README drafted with Claude (claude-opus-4-8)
+- 🤖 bespoke, locally trained models

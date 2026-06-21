@@ -10,18 +10,15 @@
 #   - bridges paling to Kafka (emit/consume) — best-effort, never fatal.
 # All on :9090 (see sidecar/main.go).
 #
-# HOST-GATEWAY ASSUMPTION (this is why the hostAliases block exists):
-#   The sidecar's poll loop dials `host.docker.internal:8090` — that name is
-#   hardcoded in sidecar/main.go and the migration contract forbids touching
-#   sidecar code here. Inside k3d the host is `host.k3d.internal`, NOT
-#   `host.docker.internal`, so the hardcoded name would not resolve. The
-#   `hostAliases` below injects an /etc/hosts entry so `host.docker.internal`
-#   resolves to the host-gateway IP inside this pod, making the unmodified
-#   binary reach the bare-metal daemon. The IP must match the one in
-#   daemon-endpoints.yaml (10.42.0.1, the k3d/k3s default host gateway) — keep
-#   the two in sync. The cleaner long-term fix is to point the poll at the
-#   in-cluster `paling` Service name; that needs a code change and is filed for
-#   follow-up rather than done here.
+# HOST GATEWAY (resolved by name, no baked IP):
+#   The sidecar reaches the bare-metal daemon by NAME, not a hardcoded IP.
+#   sidecar/main.go reads the daemon base from PALING_DAEMON_BASE, defaulting to
+#   http://host.k3d.internal:8090 — `host.k3d.internal` is the name k3d injects
+#   into CoreDNS for the host gateway, resolved at runtime. So there is no
+#   hostAliases hack and no frozen 192.168.5.2 here (the earlier form pinned that
+#   IP and had to stay in sync with a manual daemon Endpoints — both are gone;
+#   the daemon Service is now an ExternalName, see daemon-service.yaml). Override
+#   PALING_DAEMON_BASE below if a k3d build does not inject the name.
 # -----------------------------------------------------------------------------
 apiVersion: apps/v1
 kind: Deployment
@@ -51,24 +48,18 @@ spec:
         prometheus.io/port: "9090"
         prometheus.io/path: /metrics
     spec:
-      # See the HOST-GATEWAY ASSUMPTION header. This makes the daemon's hardcoded
-      # `host.docker.internal` resolvable inside k3d without a code change. If the
-      # host-gateway IP differs for this cluster, change it here AND in
-      # daemon-endpoints.yaml.
-      hostAliases:
-        - ip: "10.42.0.1"
-          hostnames:
-            - host.docker.internal
       containers:
         - name: paling-sidecar
           # Locally-built image — built from sidecar/Dockerfile, NOT pulled.
           # Pinned to an explicit tag (never :latest): the primary agent imports
           # this exact tag into k3d with `k3d image import`, so the cached image
           # matches and no registry pull happens. Build + tag before apply:
-          #   docker build -t paling-sidecar:v0 ./sidecar
-          #   k3d image import paling-sidecar:v0 -c fleet
+          #   docker build -t paling-sidecar:v1 ./sidecar
+          #   k3d image import paling-sidecar:v1 -c fleet
           # Bump the tag deliberately when the sidecar changes; do not float it.
-          image: paling-sidecar:v0
+          # v1: daemon URL resolves host.k3d.internal by name (no baked host IP);
+          # also drops the removed registerWithDelightd path.
+          image: paling-sidecar:v1
           # The image is local-only, so never let the kubelet try a registry
           # pull — that would fail (and waste the throttled link). IfNotPresent
           # uses the imported image and only pulls if genuinely absent.
@@ -86,12 +77,12 @@ spec:
               value: kafka:9092
             - name: SCHEMA_REGISTRY_URL
               value: http://schema-registry:8081
-            # Inbound orchestration relay target. The poll loop's daemon URL is
-            # hardcoded (handled via hostAliases above); this one is env-driven,
-            # so we set it to the host gateway explicitly. Uses the alias name so
-            # it travels with the same /etc/hosts entry.
-            - name: PALING_DAEMON_ORCHESTRATE_URL
-              value: http://host.docker.internal:8090/orchestrate
+            # The bare-metal daemon's base URL, resolved by NAME (no baked IP):
+            # host.k3d.internal is k3d's CoreDNS host-gateway name. The /health
+            # poll and the orchestrate relay both derive from this base (see
+            # PALING_DAEMON_BASE / PALING_DAEMON_ORCHESTRATE_URL in main.go).
+            - name: PALING_DAEMON_BASE
+              value: http://host.k3d.internal:8090
           # /health on :9090 returns 200 once the HTTP server is up. It reflects
           # the SIDECAR's own liveness, not the bare-metal daemon's — daemon
           # health is surfaced as the paling_poll_* metrics, deliberately, so a

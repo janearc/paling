@@ -32,13 +32,21 @@ extractor output (the quell logs) and must be followed exactly:
     shit") and is the highest-signal painter data, so it is always kept.
   * Merge consecutive same-role turns. A single assistant reply sometimes
     streams as two adjacent ``host is None`` rows; concatenate them.
-  * Unicode-normalize mojibake (see ``normalize_punctuation`` below, which
-    mirrors the upstream extractor's reference implementation).
+  * Unicode-normalize mojibake (see ``normalize_punctuation`` below).
+
+Normalization contract (separation of duties): paling ALWAYS normalizes text
+its own way, regardless of what the upstream extractor or a bento-builder did.
+Those layers may normalize too -- that is fine -- but paling re-normalizes
+unconditionally. paling owns the canonical form of its own training data; it
+does not trust an upstream's normalization to match paling's table. This is a
+deliberate decision (Max), not redundant work: the upstream table drifts, and
+paling's table is maintained independently to be correct for paling's corpus.
 
 The character dataset is ``[system, user, assistant, user, assistant, ...]``
-per session. The painter dataset pairs each painter (user) turn with the
-assistant turn it answers -- painter turns are reactive and are never emitted
-in isolation.
+per session. The painter dataset carries the FULL running conversation in the
+painter's frame (roles inverted): the character's words become ``user`` context
+and the painter's words become the ``assistant`` target, so the painter can
+learn multi-turn escalation rather than a single isolated reaction.
 """
 
 import json
@@ -55,22 +63,42 @@ MIN_TURN_CHARS = 20
 # instructions are not recoverable. It is not dialogue; drop it.
 CUSTOM_INSTRUCTIONS_MARKER = "Original custom instructions no longer available"
 
-# Mirror of chatgpt-logextract.py's normalize_punctuation. Kept here (rather
-# than imported) because the extractor lives in a separate repo (archaea) that
-# paling does not depend on. If the upstream table changes, update both.
+# paling's OWN punctuation/mojibake normalization table. This started as a copy
+# of chatgpt-logextract.py's normalize_punctuation but is now maintained
+# independently: paling owns the canonical form of its training data and
+# re-normalizes regardless of upstream (see module docstring). Order in the
+# dict matters only insofar as multi-byte mojibake keys must be replaced before
+# their single-character counterparts -- here they are disjoint, so order is
+# irrelevant.
 _PUNCT_REPLACEMENTS = {
-    "\u2014": "--", "\u2013": "-", "\u201c": '"', "\u201d": '"',
-    "\u2018": "'", "\u2019": "'", "\u00e2\u0080\u0099": "'",
-    "\u00e2\u0080\u009d": '"', "\u00e2\u0080\u009c": '"',
-    "\u00e2\u0080\u0094": "--", "\u00e2\u0080\u00a6": "...",
-    "\u00e2\u0080\u0098": "'", "\u00ee\u0088\u0084\u00ee\u0088\u0086": "",
+    # Smart punctuation -> ascii.
+    "\u2014": "--",      # em-dash
+    "\u2013": "-",       # en-dash
+    "\u201c": '"',       # left double quote
+    "\u201d": '"',       # right double quote
+    "\u2018": "'",       # left single quote
+    "\u2019": "'",       # right single quote
+    "\u2026": "...",     # horizontal ellipsis
+    "\u00a0": " ",       # non-breaking space
+    # UTF-8-as-Latin-1 mojibake (a leading "\u00e2\u0080" = the bytes for the
+    # U+20xx punctuation block misread one byte at a time).
+    "\u00e2\u0080\u0099": "'",     # right single quote
+    "\u00e2\u0080\u0098": "'",     # left single quote
+    "\u00e2\u0080\u009c": '"',     # left double quote
+    "\u00e2\u0080\u009d": '"',     # right double quote
+    "\u00e2\u0080\u0094": "--",    # em-dash
+    "\u00e2\u0080\u0093": "-",     # en-dash
+    "\u00e2\u0080\u00a6": "...",   # ellipsis
+    # Private-use glyph pair the extractor leaves behind.
+    "\u00ee\u0088\u0084\u00ee\u0088\u0086": "",
 }
 
 
 def normalize_punctuation(text: str) -> str:
-    """Normalize mojibake and smart punctuation.
+    """Normalize mojibake and smart punctuation to paling's canonical ascii form.
 
-    Reference implementation: chatgpt-logextract.py:normalize_punctuation.
+    paling owns this table and applies it unconditionally; see the module
+    docstring for the separation-of-duties contract.
     """
     for k, v in _PUNCT_REPLACEMENTS.items():
         text = text.replace(k, v)
@@ -165,33 +193,51 @@ def character_records(
 
 
 def painter_records(turns: List[Dict[str, str]]) -> List[Dict[str, Any]]:
-    """Build PAINTER pairs from ordered chat turns.
+    """Build PAINTER records carrying the full running conversation.
 
-    Every painter (user) turn is reactive: it answers the assistant turn that
-    immediately precedes it. We emit ``(preceding assistant context -> painter
-    turn)`` pairs and never emit a painter turn in isolation. A leading painter
-    turn with no preceding assistant context is skipped.
+    The painter's skill is multi-turn escalation ("you've dodged me, push
+    harder"), so each painter turn is emitted with the ENTIRE prior conversation
+    as context -- not just the immediately-preceding assistant turn. The frame
+    is inverted into the painter's point of view:
+
+      * a ``system`` turn stays ``system``;
+      * a character (``assistant``) turn becomes a ``user`` turn -- the
+        character's words are the painter's context;
+      * a painter (``user``) turn becomes the ``assistant`` target.
+
+    For each painter turn we emit ``{"messages": history + [painter as
+    assistant]}``, then fold that painter turn into the running history (as an
+    ``assistant`` turn) so later examples see it. A painter turn is skipped ONLY
+    when the history is genuinely empty (nothing to react to). When a system
+    prompt is present the history is never empty, so a leading painter turn (the
+    opener) IS emitted as ``[system] + [opener-as-assistant]`` -- it is no longer
+    dropped.
+
+    No windowing: sessions are short and we carry full history. Windowing is a
+    deferred follow-up.
     """
     records: List[Dict[str, Any]] = []
-    prev_assistant: Optional[str] = None
+    history: List[Dict[str, str]] = []
 
     for turn in turns:
         role = turn["role"]
-        if role == "assistant":
-            prev_assistant = turn["content"]
+        content = turn["content"]
+        if role == "system":
+            history.append({"role": "system", "content": content})
+        elif role == "assistant":
+            # The character's words are the painter's context.
+            history.append({"role": "user", "content": content})
         elif role == "user":
-            if prev_assistant is None:
-                # Painter turn with no assistant context to react to; skip.
+            if not history:
+                # Degenerate: a painter turn with no prior context at all.
                 continue
             records.append({
-                "messages": [
-                    {"role": "user", "content": prev_assistant},
-                    {"role": "assistant", "content": turn["content"]},
+                "messages": list(history) + [
+                    {"role": "assistant", "content": content},
                 ]
             })
-            # Consume the context so the same assistant turn is not reused for
-            # a subsequent painter turn (which would only happen across a merge
-            # boundary anyway).
-            prev_assistant = None
+            # Fold this painter turn into the running history so later examples
+            # carry it as prior conversation.
+            history.append({"role": "assistant", "content": content})
 
     return records

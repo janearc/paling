@@ -217,8 +217,8 @@ def _write_split(
         return 0, 0
 
     shuffled = list(records)
-    random.seed(seed)
-    random.shuffle(shuffled)
+    rng = random.Random(seed)
+    rng.shuffle(shuffled)
 
     split_idx = int(len(shuffled) * (1 - val_split))
     train_records = shuffled[:split_idx]

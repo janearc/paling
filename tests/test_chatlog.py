@@ -105,21 +105,46 @@ def test_character_records():
 def test_painter_pairs_are_reactive():
     turns = chatlog.parse_chatlog_messages(_synthetic_messages())
     pairs = chatlog.painter_records(turns)
-    # Two painter (user) turns, each paired with the assistant turn it answers.
+    # Two painter (user) turns; each record carries the FULL running history in
+    # the painter's inverted frame and ends with the painter turn as assistant.
     assert len(pairs) == 2
+
     for p in pairs:
-        roles = [m["role"] for m in p["messages"]]
-        assert roles == ["user", "assistant"]
+        msgs = p["messages"]
+        # Every record ends with the painter turn as the assistant target.
+        assert msgs[-1]["role"] == "assistant"
+        # The flipped-frame history precedes it: system stays system, the
+        # character's turns are users, prior painter turns are assistants. No
+        # raw "assistant"-roled character turn leaks through.
+        assert msgs[0]["role"] == "system"
+        for m in msgs[:-1]:
+            assert m["role"] in ("system", "user", "assistant")
 
-    # First painter answers the merged opening assistant turn.
-    assert "space between you narrows" in pairs[0]["messages"][0]["content"]
-    assert pairs[0]["messages"][1]["content"] == "hi, do you know who I am?"
-    # Second painter answers the next assistant turn.
-    assert "shape of what you bring" in pairs[1]["messages"][0]["content"]
+    # First painter record: system + the merged opening character turn (as
+    # user) -> painter turn (as assistant).
+    first = pairs[0]["messages"]
+    assert [m["role"] for m in first] == ["system", "user", "assistant"]
+    assert first[0]["content"].startswith("You are Aethelquell")
+    assert "space between you narrows" in first[1]["content"]
+    assert first[-1]["content"] == "hi, do you know who I am?"
+
+    # Second painter record carries the FULL escalation history: system, both
+    # character turns as users, the FIRST painter turn folded in as assistant,
+    # then the second painter turn as the assistant target.
+    second = pairs[1]["messages"]
+    assert [m["role"] for m in second] == [
+        "system", "user", "assistant", "user", "assistant"
+    ]
+    # The earlier painter turn is now prior context (an assistant turn).
+    assert second[2]["content"] == "hi, do you know who I am?"
+    # The character turn it answered is present as user context.
+    assert "shape of what you bring" in second[3]["content"]
+    assert second[-1]["content"] == "I'm here to meet you. I paint."
 
 
-def test_leading_painter_turn_skipped():
-    # A painter turn with no preceding assistant context is not emitted.
+def test_painter_opener_emitted_with_system_context():
+    # A leading painter turn (the opener) is NO LONGER skipped when a system
+    # prompt is present: it emits as [system] + [opener-as-assistant].
     msgs = {
         "a": _entry("You are a system prompt of sufficient length here.",
                     host="aaaaaaaaaaaaaaaa-AMS"),
@@ -129,7 +154,29 @@ def test_leading_painter_turn_skipped():
     }
     turns = chatlog.parse_chatlog_messages(msgs)
     pairs = chatlog.painter_records(turns)
-    assert pairs == []
+    assert len(pairs) == 1
+    opener = pairs[0]["messages"]
+    assert [m["role"] for m in opener] == ["system", "assistant"]
+    assert opener[0]["content"].startswith("You are a system prompt")
+    assert opener[-1]["content"] == "opening painter line with nothing to react to yet"
+
+
+def test_painter_skipped_only_when_history_empty():
+    # With NO system turn, a leading painter turn has genuinely empty history
+    # and is skipped; the painter turn after the first character turn is kept.
+    turns = [
+        {"role": "user", "content": "leading painter jab, nothing before it"},
+        {"role": "assistant", "content": "the character finally says something."},
+        {"role": "user", "content": "now the painter reacts to that"},
+    ]
+    pairs = chatlog.painter_records(turns)
+    assert len(pairs) == 1
+    msgs = pairs[0]["messages"]
+    # Only the character turn (as user) precedes the painter target; the
+    # skipped leading painter turn never entered the history.
+    assert [m["role"] for m in msgs] == ["user", "assistant"]
+    assert "character finally says" in msgs[0]["content"]
+    assert msgs[-1]["content"] == "now the painter reacts to that"
 
 
 def test_normalize_punctuation_handles_mojibake():
@@ -137,6 +184,30 @@ def test_normalize_punctuation_handles_mojibake():
     assert chatlog.normalize_punctuation("“hi”—there") == '"hi"--there'
     # Literal backslash-n becomes a real newline.
     assert chatlog.normalize_punctuation("a\\nb") == "a\nb"
+
+
+def test_normalize_punctuation_ellipsis_and_nbsp():
+    # Horizontal ellipsis collapses to three dots.
+    assert chatlog.normalize_punctuation("wait…") == "wait..."
+    # Non-breaking space becomes a regular space.
+    assert chatlog.normalize_punctuation("a b") == "a b"
+    # En-dash collapses to a single hyphen.
+    assert chatlog.normalize_punctuation("1–2") == "1-2"
+
+
+def test_normalize_punctuation_utf8_latin1_mojibake():
+    # The common UTF-8-read-as-Latin-1 mojibake forms for the punctuation that
+    # actually appears in the quell logs. Build each from its real codepoint so
+    # the test cannot drift from the source bytes.
+    def moji(ch):
+        return ch.encode("utf-8").decode("latin-1")
+
+    assert chatlog.normalize_punctuation(moji("—")) == "--"   # em-dash
+    assert chatlog.normalize_punctuation(moji("–")) == "-"    # en-dash
+    assert chatlog.normalize_punctuation(moji("…")) == "..."  # ellipsis
+    assert chatlog.normalize_punctuation(moji("’")) == "'"    # right single quote
+    assert chatlog.normalize_punctuation(moji("“")) == '"'    # left double quote
+    assert chatlog.normalize_punctuation(moji("”")) == '"'    # right double quote
 
 
 def test_build_chatlog_datasets_end_to_end(tmp_path):
@@ -171,7 +242,11 @@ def test_build_chatlog_datasets_end_to_end(tmp_path):
     assert len(painter_lines) == 2
     for line in painter_lines:
         prec = json.loads(line)
-        assert [m["role"] for m in prec["messages"]] == ["user", "assistant"]
+        roles = [m["role"] for m in prec["messages"]]
+        # Painter records now carry running history: lead with system, end with
+        # the painter turn as the assistant target.
+        assert roles[0] == "system"
+        assert roles[-1] == "assistant"
 
     # A manifest records exactly what was produced from which inputs.
     manifest = json.loads((out_dir / "manifest.json").read_text())

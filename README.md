@@ -112,7 +112,7 @@ sections below cover the everyday fine-tuning path.
 ### 1. Prepare a dataset
 
 Scan a directory of markdown files and emit `train.jsonl` and `valid.jsonl`.
-Three formatting modes are available:
+Four formatting modes are available:
 
 - **`sections`** (default; best for chat): split each file by markdown headers
   (`#`, `##`, …) and build instruction/response pairs that map a header path to
@@ -121,6 +121,12 @@ Three formatting modes are available:
   (`--chunk-size`, `--overlap`), in words by default or in tokens if
   `--model-path` is supplied.
 - **`qa_pairs`**: treat each whole document as a single Q&A pair.
+- **`chatlog`**: consume ChatGPT-share chatlogs (extractor messages-JSON) and
+  emit two paired datasets — a **character** dataset (the target side, standard
+  chat data) and a **painter** dataset (each reactive user turn paired with the
+  assistant turn it answers). See
+  [the chatlog ingest doc](docs/pipeline/chatlog-ingest.md) for the two-stage
+  flow and the parsing rules.
 
 ```bash
 paling prepare \

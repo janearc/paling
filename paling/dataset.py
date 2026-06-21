@@ -200,6 +200,174 @@ def parse_taxonometry_directory(tax_dir: Path) -> List[Dict[str, Any]]:
     logger.info(f"Parsed {len(tax_data)} Taxonometry profile definitions.")
     return tax_data
 
+def _write_split(
+    records: List[Dict[str, Any]],
+    output_path: Path,
+    val_split: float,
+    seed: int,
+    label: str,
+) -> Tuple[int, int]:
+    """Shuffle one record list, split into train/valid, write both into out/<label>/."""
+    # Nothing to write.
+    if not records:
+        return 0, 0
+
+    # Shuffle with a fixed seed so the same inputs always split the same way
+    # (reproducible datasets).
+    shuffled = list(records)
+    rng = random.Random(seed)
+    rng.shuffle(shuffled)
+
+    # Cut the list into train (the front) and valid (the tail). e.g. val_split
+    # of 0.1 keeps 90% for training.
+    split_idx = int(len(shuffled) * (1 - val_split))
+    train_records = shuffled[:split_idx]
+    val_records = shuffled[split_idx:]
+    # Edge case: if rounding left valid empty but we have more than one record,
+    # peel off the last one so valid is never empty when it could be non-empty.
+    if not val_records and len(shuffled) > 1:
+        train_records = shuffled[:-1]
+        val_records = shuffled[-1:]
+
+    # Each dataset gets its own subdir with the standard train.jsonl/valid.jsonl
+    # names, so `paling train --data out/<label>` just works.
+    split_dir = output_path / label
+    split_dir.mkdir(parents=True, exist_ok=True)
+    train_file = split_dir / "train.jsonl"
+    valid_file = split_dir / "valid.jsonl"
+    # Write one JSON object per line (JSONL). ensure_ascii=False keeps emoji and
+    # other non-ascii readable instead of escaping them to \uXXXX.
+    with open(train_file, "w", encoding="utf-8") as f:
+        for rec in train_records:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    with open(valid_file, "w", encoding="utf-8") as f:
+        for rec in val_records:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+    logger.info(
+        f"  {label}: {len(train_records)} train / {len(val_records)} valid "
+        f"-> {train_file}, {valid_file}"
+    )
+    return len(train_records), len(val_records)
+
+
+def build_chatlog_datasets(
+    input_dir: str,
+    output_dir: str,
+    val_split: float = 0.1,
+    seed: int = 42,
+    system_prompt: Optional[str] = None,
+    skip_bad: bool = False,
+) -> Dict[str, Tuple[int, int]]:
+    """Read a dir of scraped chatlog JSON and write the CHARACTER + PAINTER datasets.
+
+    This is stage 2 of the chatlog pipeline (see docs/pipeline/chatlog-ingest.md).
+    Reads every *.json file in input_dir, builds two datasets in their own subdirs
+    of output_dir (character/ and painter/), writes a manifest, and returns
+    {label: (n_train, n_valid)}. By default a single unparseable file aborts the
+    whole build; pass skip_bad=True to skip bad files and keep going.
+    """
+    # Imported here (not at module top) to avoid a circular import.
+    from paling import chatlog
+
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Accept either a single file or a directory of *.json files.
+    if input_path.is_file():
+        json_files = [input_path]
+    else:
+        json_files = sorted(input_path.glob("*.json"))
+    if not json_files:
+        raise ValueError(f"No chatlog JSON files found in {input_dir}")
+
+    logger.info(f"Found {len(json_files)} chatlog JSON file(s).")
+
+    # Accumulators: the two datasets we're building, the files that failed to
+    # parse, and a per-file count for the manifest.
+    character_records: List[Dict[str, Any]] = []
+    painter_records: List[Dict[str, Any]] = []
+
+    failed: List[Dict[str, str]] = []
+    per_file: List[Dict[str, Any]] = []
+
+    for jf in json_files:
+        # Parse one file into turns. Record the failure and move on rather than
+        # crashing mid-loop -- we decide what to do about failures after.
+        try:
+            turns = chatlog.load_chatlog(jf)
+        except Exception as e:
+            logger.warning(f"Failed to parse chatlog {jf}: {e}")
+            failed.append({"file": str(jf), "error": str(e)})
+            continue
+
+        # Build both datasets from the same turns and append to the running totals.
+        char_recs = chatlog.character_records(turns, system_prompt)
+        pair_recs = chatlog.painter_records(turns)
+        character_records.extend(char_recs)
+        painter_records.extend(pair_recs)
+
+        # Note what this file contributed, for the manifest.
+        entry = {
+            "file": str(jf),
+            "turns": len(turns),
+            "character_records": len(char_recs),
+            "painter_pairs": len(pair_recs),
+        }
+        per_file.append(entry)
+        logger.info(
+            f"  {jf.name}: {len(turns)} turns -> "
+            f"{len(char_recs)} character records, {len(pair_recs)} painter pairs"
+        )
+
+    # Fail loud on bad inputs rather than train on partial data, unless the
+    # caller explicitly opted into skip-and-warn.
+    if failed and not skip_bad:
+        names = "\n".join(f"  {f['file']}: {f['error']}" for f in failed)
+        raise ValueError(
+            f"{len(failed)} of {len(json_files)} chatlog file(s) failed to "
+            f"parse; refusing to build datasets on partial data "
+            f"(pass skip_bad=True to skip these):\n{names}"
+        )
+
+    # Nothing usable came out of any file -> there's no dataset to write.
+    if not character_records and not painter_records:
+        raise ValueError("No chatlog records generated. Check inputs.")
+
+    logger.info("Chatlog dataset creation complete:")
+    # Shuffle/split/write each dataset into its own subdir; keep the counts.
+    results = {
+        "character": _write_split(character_records, output_path, val_split, seed, "character"),
+        "painter": _write_split(painter_records, output_path, val_split, seed, "painter"),
+    }
+
+    # Write a manifest next to the datasets recording exactly what went in, what
+    # failed, and where each split landed -- so a build is always auditable.
+    manifest = {
+        "input_dir": str(input_path),
+        "output_dir": str(output_path),
+        "skip_bad": skip_bad,
+        "inputs": per_file,
+        "failed": failed,
+        "datasets": {
+            label: {
+                "train": str(output_path / label / "train.jsonl"),
+                "valid": str(output_path / label / "valid.jsonl"),
+                "n_train": n_train,
+                "n_valid": n_valid,
+            }
+            for label, (n_train, n_valid) in results.items()
+        },
+    }
+    manifest_path = output_path / "manifest.json"
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=2)
+    logger.info(f"  manifest -> {manifest_path}")
+
+    return results
+
+
 def build_datasets(
     input_dir: str,
     output_dir: str,
@@ -214,9 +382,24 @@ def build_datasets(
     rlhf_dir: Optional[str] = None,
     taxonometry_dir: Optional[str] = None
 ) -> Tuple[int, int]:
-    """
-    Processes markdown files, RLHF data, and taxonometry profiles to build train/validation JSONL datasets.
-    """
+    """Build train/validation JSONL datasets from markdown, RLHF data, and taxonometry."""
+    # The "chatlog" mode is a different beast: it reads scraped chatlog JSON
+    # (not markdown) and writes two paired datasets via build_chatlog_datasets.
+    # Hand it off, sum the per-dataset counts, and return the combined totals.
+    if mode == "chatlog":
+        results = build_chatlog_datasets(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            val_split=val_split,
+            seed=seed,
+            # The character side carries its own system prompt from the log; only
+            # fall back to the explicit prompt if the caller overrode the default.
+            system_prompt=None if system_prompt == DEFAULT_SYSTEM_PROMPT else system_prompt,
+        )
+        total_train = sum(t for t, _ in results.values())
+        total_valid = sum(v for _, v in results.values())
+        return total_train, total_valid
+
     if exclude_patterns is None:
         exclude_patterns = [r'\.git', r'\.venv', r'\.obsidian', r'node_modules']
         

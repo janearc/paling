@@ -79,7 +79,7 @@ def main():
     parser_prep.add_argument(
         "--input-dir", "-i",
         required=True,
-        help="Directory containing markdown files (.md) to process"
+        help="Directory of markdown files (.md) to process; in 'chatlog' mode, a directory of extractor messages-JSON files (or a single .json file)"
     )
     parser_prep.add_argument(
         "--output-dir", "-o",
@@ -88,9 +88,9 @@ def main():
     )
     parser_prep.add_argument(
         "--mode", "-m",
-        choices=["sections", "raw_text", "qa_pairs"],
+        choices=["sections", "raw_text", "qa_pairs", "chatlog"],
         default="sections",
-        help="Preparation mode: 'sections' (split by headers to build QA pairs), 'raw_text' (sliding window chunks), 'qa_pairs' (full file QA)"
+        help="Preparation mode: 'sections' (split by headers to build QA pairs), 'raw_text' (sliding window chunks), 'qa_pairs' (full file QA), 'chatlog' (extractor messages-JSON -> character + painter chat data)"
     )
     parser_prep.add_argument(
         "--chunk-size", "-c",

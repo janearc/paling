@@ -1,4 +1,3 @@
-import json
 import logging
 from pathlib import Path
 from typing import Optional, Any
@@ -39,7 +38,8 @@ def profile_single_file(
         doc_stem = file_path.stem
         logger.info(f"📊 Profiling document '{doc_stem}' ({file_path.name})...")
         
-        # Calculate taxonometry metrics (falls back to lexical heuristics if model/tokenizer are None)
+        # Calculate taxonometry metrics
+        # (falls back to lexical heuristics if model/tokenizer are None)
         profiled = profile_document(
             text=content,
             title=doc_stem,
@@ -55,7 +55,9 @@ def profile_single_file(
                 git_stats = get_git_stats(str(file_path))
                 profiled.git_stats = git_stats
             except Exception as e:
-                logger.info(f"⚠️ Warning: Failed to extract Git statistics for {file_path.name}: {e}")
+                logger.info(
+                    f"Warning: Failed to extract Git statistics for {file_path.name}: {e}"
+                )
                 
         # Write to JSON
         output_dir.mkdir(parents=True, exist_ok=True)

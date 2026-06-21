@@ -1,7 +1,6 @@
 import subprocess
 import sys
 import logging
-from pathlib import Path
 from typing import Optional, List
 
 logger = logging.getLogger(__name__)
@@ -62,7 +61,8 @@ def run_fuse(
             if not line and process.poll() is not None:
                 break
             if line:
-                sys.stdout.write(str(line)); sys.stdout.flush()
+                sys.stdout.write(str(line))
+                sys.stdout.flush()
                 
         process.wait()
         return process.returncode

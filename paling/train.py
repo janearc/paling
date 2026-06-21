@@ -77,7 +77,8 @@ def run_training(
             if not line and process.poll() is not None:
                 break
             if line:
-                sys.stdout.write(str(line)); sys.stdout.flush()
+                sys.stdout.write(str(line))
+                sys.stdout.flush()
                 
         process.wait()
         return process.returncode

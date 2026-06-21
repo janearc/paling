@@ -17,7 +17,10 @@ threshold (e.g. 0.6) for what constitutes a "high‑reward" interaction.
 from typing import Set
 
 # Pre‑defined cue words that signal vivid, emotionally charged language.
-_CUE_WORDS = {"star", "fire", "death", "copper", "annihilation", "burn", "lava", "blood", "scream", "void"}
+_CUE_WORDS = {
+    "star", "fire", "death", "copper", "annihilation",
+    "burn", "lava", "blood", "scream", "void",
+}
 
 # Keep a global set of seen responses to encourage novelty.
 _SEEN: Set[str] = set()

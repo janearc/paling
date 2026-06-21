@@ -37,7 +37,9 @@ class TopologyBanchan:
         """
         Ingest a dataset of conversational embeddings.
         """
-        self.embeddings = np.array(embeddings) if not isinstance(embeddings, np.ndarray) else embeddings
+        self.embeddings = (
+            np.array(embeddings) if not isinstance(embeddings, np.ndarray) else embeddings
+        )
         return self
 
     def project(self) -> "TopologyBanchan":
@@ -97,7 +99,10 @@ class TopologyBanchan:
         for a custom visual rendering engine.
         """
         if self.projection is None or self.cluster_labels is None or self.knn_graph is None:
-            raise ValueError("Pipeline not fully executed. Run ingest().project().cluster().connect() first.")
+            raise ValueError(
+                "Pipeline not fully executed. "
+                "Run ingest().project().cluster().connect() first."
+            )
         
         nodes = []
         for i in range(len(self.projection)):

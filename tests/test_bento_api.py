@@ -238,7 +238,9 @@ def test_answers_valid_bento(tmp_path, monkeypatch):
     c = _client(tmp_path, monkeypatch)
     c.post("/bento", json={"name": "a1"})
     _seed_questions(tmp_path, "a1")
-    monkeypatch.setattr(modelclient, "generate_seq2seq", lambda *a, **k: "the withholding of good faith")
+    monkeypatch.setattr(
+        modelclient, "generate_seq2seq", lambda *a, **k: "the withholding of good faith"
+    )
     r = c.post("/bento/a1/answers")
     assert r.status_code == 200
     body = r.json()
@@ -269,7 +271,9 @@ def _seed_review(tmp_path, name):
     rdir.mkdir(parents=True, exist_ok=True)
     (rdir / "d.json").write_text(json.dumps({
         "context_id": "d", "source_doc": "d.md", "context": "ctx",
-        "questions": [{"question": "what is disingenerosity?", "answers": ["a"], "approved": False}],
+        "questions": [
+            {"question": "what is disingenerosity?", "answers": ["a"], "approved": False}
+        ],
     }))
 
 

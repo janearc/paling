@@ -7,7 +7,6 @@ import json
 from paling.dataset import parse_markdown_to_sections, chunk_text_by_words, build_datasets
 from wonderlib.markdown_xml import markdown_to_xml
 from wonderlib.profiling import RarityAnalyzer, profile_document
-from wonderlib.git_stats import GitStats, GitCommitEntry
 
 class TestPalingAndWonderLib(unittest.TestCase):
     def test_markdown_parsing(self):

@@ -34,11 +34,13 @@ def _reachable_url(url):
         return url
     host = os.environ.get("PALING_BACKEND_HOST", "127.0.0.1")
     for m in _MESH_HOSTS:
-        url = url.replace("//" + m + ":", "//" + host + ":").replace("//" + m + "/", "//" + host + "/")
+        url = url.replace("//" + m + ":", "//" + host + ":").replace(
+            "//" + m + "/", "//" + host + "/"
+        )
     return url
 
 
-class ModelUnavailable(RuntimeError):
+class ModelUnavailableError(RuntimeError):
     # raised when no healthy backend can be resolved for a requested model.
     pass
 
@@ -71,12 +73,12 @@ def resolve_model(model_name, delightd_url=None, timeout=3):
 
 def generate(model_name, prompt, delightd_url=None, timeout=120, **opts):
     # resolve `model_name` via delightd and run a single (non-streaming) ollama
-    # completion, returning the generated text. raises ModelUnavailable if no
+    # completion, returning the generated text. raises ModelUnavailableError if no
     # backend can be resolved -- the caller decides whether that's fatal (a
     # model-optional stage can catch it and degrade).
     backend = resolve_model(model_name, delightd_url=delightd_url)
     if backend is None:
-        raise ModelUnavailable(f"no backend serves model {model_name!r} (is delightd up?)")
+        raise ModelUnavailableError(f"no backend serves model {model_name!r} (is delightd up?)")
 
     payload = {"model": backend["model"], "prompt": prompt, "stream": False}
     payload.update(opts)
@@ -161,11 +163,11 @@ _seq2seq_backends = {}
 
 def get_seq2seq(model_name):
     # resolve a logical seq2seq model name to a cached in-process backend. raises
-    # ModelUnavailable for an unknown name (fail-closed, like the decoder path) so
+    # ModelUnavailableError for an unknown name (fail-closed, like the decoder path) so
     # a stage never silently generates with the wrong model.
     hf_id = _SEQ2SEQ_MODELS.get(model_name)
     if hf_id is None:
-        raise ModelUnavailable(f"no seq2seq backend for model {model_name!r}")
+        raise ModelUnavailableError(f"no seq2seq backend for model {model_name!r}")
     backend = _seq2seq_backends.get(model_name)
     if backend is None:
         backend = _Seq2SeqBackend(hf_id)

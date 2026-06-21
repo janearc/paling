@@ -226,7 +226,7 @@ def test_build_chatlog_datasets_end_to_end(tmp_path):
     for name in ("train.jsonl", "valid.jsonl"):
         f = out_dir / "character" / name
         if f.is_file():
-            char_lines += [l for l in f.read_text().splitlines() if l.strip()]
+            char_lines += [ln for ln in f.read_text().splitlines() if ln.strip()]
     assert len(char_lines) == 1
     rec = json.loads(char_lines[0])
     assert rec["messages"][0]["role"] == "system"
@@ -235,7 +235,7 @@ def test_build_chatlog_datasets_end_to_end(tmp_path):
     for name in ("train.jsonl", "valid.jsonl"):
         f = out_dir / "painter" / name
         if f.is_file():
-            painter_lines += [l for l in f.read_text().splitlines() if l.strip()]
+            painter_lines += [ln for ln in f.read_text().splitlines() if ln.strip()]
     assert len(painter_lines) == 2
     for line in painter_lines:
         prec = json.loads(line)

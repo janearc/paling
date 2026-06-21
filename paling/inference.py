@@ -21,13 +21,18 @@ import sys
 import logging
 import traceback
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import Optional
 from mlx_lm import load, stream_generate
 
 logger = logging.getLogger(__name__)
 
 class ChatSession:
-    def __init__(self, model_path: str, adapter_path: Optional[str] = None, system_prompt: Optional[str] = None):
+    def __init__(
+        self,
+        model_path: str,
+        adapter_path: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+    ):
         logger.info(f"Loading model from '{model_path}'...")
         
         self.system_prompt = system_prompt
@@ -51,21 +56,34 @@ class ChatSession:
         # 2. Initialize GGUF model via llama-cpp-python
         if self.is_gguf:
             if adapter_path:
-                logger.info("⚠️ Warning: LoRA adapters are not supported for GGUF models in this mode. Running base model only.")
+                logger.info(
+                    "Warning: LoRA adapters are not supported for GGUF models in "
+                    "this mode. Running base model only."
+                )
                 
             try:
                 import llama_cpp
             except ImportError:
                 logger.info("\n" + "=" * 80)
-                logger.info("❌ Error: To run GGUF models, you must install 'llama-cpp-python' in your environment.")
-                logger.info("To compile with hardware Metal GPU Acceleration on Apple Silicon, run:")
+                logger.info(
+                    "Error: To run GGUF models, you must install "
+                    "'llama-cpp-python' in your environment."
+                )
+                logger.info(
+                    "To compile with hardware Metal GPU Acceleration on Apple Silicon, run:"
+                )
                 logger.info("  CMAKE_ARGS='-DLLAMA_METAL=on' pip install llama-cpp-python")
                 logger.info("Or using poetry:")
-                logger.info("  CMAKE_ARGS='-DLLAMA_METAL=on' poetry run pip install llama-cpp-python")
+                logger.info(
+                    "  CMAKE_ARGS='-DLLAMA_METAL=on' poetry run pip install llama-cpp-python"
+                )
                 logger.info("=" * 80 + "\n")
                 sys.exit(1)
                 
-            logger.info(f"Initializing GGUF model from '{self.gguf_path}' via llama_cpp (Metal GPU enabled)...")
+            logger.info(
+                f"Initializing GGUF model from '{self.gguf_path}' "
+                "via llama_cpp (Metal GPU enabled)..."
+            )
             try:
                 self.model = llama_cpp.Llama(
                     model_path=str(self.gguf_path),
@@ -108,7 +126,8 @@ class ChatSession:
                 for chunk in response:
                     delta = chunk['choices'][0]['delta']
                     if 'content' in delta:
-                        sys.stdout.write(str(delta['content'])); sys.stdout.flush()
+                        sys.stdout.write(str(delta['content']))
+                        sys.stdout.flush()
                         response_text += delta['content']
                 logger.info("") # Print final newline
             except KeyboardInterrupt:
@@ -125,7 +144,7 @@ class ChatSession:
                     tokenize=False,
                     add_generation_prompt=True
                 )
-            except Exception as e:
+            except Exception:
                 # Fallback for models without standard chat templates
                 prompt = ""
                 for msg in self.history:
@@ -145,7 +164,8 @@ class ChatSession:
                     max_tokens=max_tokens,
                     temp=temp
                 ):
-                    sys.stdout.write(str(response.text)); sys.stdout.flush()
+                    sys.stdout.write(str(response.text))
+                    sys.stdout.flush()
                     response_text += response.text
                 logger.info("") # Print final newline
             except KeyboardInterrupt:
@@ -158,7 +178,11 @@ class ChatSession:
             self.history.append({"role": "assistant", "content": response_text})
         return response_text
 
-def run_interactive_chat(model_path: str, adapter_path: Optional[str] = None, system_prompt: Optional[str] = None):
+def run_interactive_chat(
+    model_path: str,
+    adapter_path: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+):
     """
     Launches an interactive shell chat session.
     """
@@ -196,6 +220,7 @@ def run_interactive_chat(model_path: str, adapter_path: Optional[str] = None, sy
             logger.info("Conversation history cleared.")
             continue
 
-        sys.stdout.write(str("Assistant > ")); sys.stdout.flush()
+        sys.stdout.write(str("Assistant > "))
+        sys.stdout.flush()
         session.send_message(cleaned_input)
         logger.info("")

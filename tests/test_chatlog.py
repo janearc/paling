@@ -6,6 +6,9 @@ exercise the parsing rules.
 """
 
 import json
+from pathlib import Path
+
+import pytest
 
 from paling import chatlog
 from paling.dataset import build_chatlog_datasets
@@ -149,9 +152,11 @@ def test_build_chatlog_datasets_end_to_end(tmp_path):
     )
     assert set(results) == {"character", "painter"}
 
+    # Each dataset lands in its OWN subdir with standard train/valid names, so
+    # `paling train --data out/character` (or out/painter) works directly.
     char_lines = []
-    for name in ("character.train.jsonl", "character.valid.jsonl"):
-        f = out_dir / name
+    for name in ("train.jsonl", "valid.jsonl"):
+        f = out_dir / "character" / name
         if f.is_file():
             char_lines += [l for l in f.read_text().splitlines() if l.strip()]
     assert len(char_lines) == 1
@@ -159,11 +164,94 @@ def test_build_chatlog_datasets_end_to_end(tmp_path):
     assert rec["messages"][0]["role"] == "system"
 
     painter_lines = []
-    for name in ("painter.train.jsonl", "painter.valid.jsonl"):
-        f = out_dir / name
+    for name in ("train.jsonl", "valid.jsonl"):
+        f = out_dir / "painter" / name
         if f.is_file():
             painter_lines += [l for l in f.read_text().splitlines() if l.strip()]
     assert len(painter_lines) == 2
     for line in painter_lines:
         prec = json.loads(line)
         assert [m["role"] for m in prec["messages"]] == ["user", "assistant"]
+
+    # A manifest records exactly what was produced from which inputs.
+    manifest = json.loads((out_dir / "manifest.json").read_text())
+    assert len(manifest["inputs"]) == 1
+    assert manifest["inputs"][0]["character_records"] == 1
+    assert manifest["inputs"][0]["painter_pairs"] == 2
+    assert manifest["failed"] == []
+
+
+def test_short_host_present_turn_survives():
+    # A short host-PRESENT row ("cut the shit" == 12 chars) is a real painter
+    # jab, not a telemetry crumb, and must be KEPT as a user turn -- only
+    # host-LESS short rows are dropped as crumbs.
+    msgs = {
+        "a": _entry("You are a system prompt of sufficient length here.",
+                    host="aaaaaaaaaaaaaaaa-AMS"),
+        "b": _entry("The assistant says something substantial enough."),
+        # short host-less crumb -> dropped
+        "c": _entry("status"),
+        # short host-PRESENT painter jab -> kept as user
+        "d": _entry("cut the shit", host="dddddddddddddddd-AMS"),
+    }
+    turns = chatlog.parse_chatlog_messages(msgs)
+    roles = [t["role"] for t in turns]
+    assert roles == ["system", "assistant", "user"]
+    assert turns[-1]["content"] == "cut the shit"
+    # the host-less crumb did not survive
+    assert all("status" != t["content"] for t in turns)
+
+
+def test_malformed_input_raises_by_default_and_skips_when_opted_in(tmp_path):
+    in_dir = tmp_path / "in"
+    in_dir.mkdir()
+    (in_dir / "good.json").write_text(
+        json.dumps({"messages": _synthetic_messages()})
+    )
+    (in_dir / "bad.json").write_text("{ this is not valid json")
+
+    out_dir_fail = tmp_path / "out_fail"
+    # Default: a malformed file makes the whole build RAISE (no silent loss).
+    with pytest.raises(Exception) as excinfo:
+        build_chatlog_datasets(
+            input_dir=str(in_dir), output_dir=str(out_dir_fail), val_split=0.0
+        )
+    assert "bad.json" in str(excinfo.value)
+
+    # skip_bad=True: the bad file is skipped-with-warning, the good one builds.
+    out_dir_skip = tmp_path / "out_skip"
+    results = build_chatlog_datasets(
+        input_dir=str(in_dir),
+        output_dir=str(out_dir_skip),
+        val_split=0.0,
+        skip_bad=True,
+    )
+    assert set(results) == {"character", "painter"}
+    manifest = json.loads((out_dir_skip / "manifest.json").read_text())
+    assert len(manifest["failed"]) == 1
+    assert "bad.json" in manifest["failed"][0]["file"]
+    assert len(manifest["inputs"]) == 1
+    assert "good.json" in manifest["inputs"][0]["file"]
+
+
+def test_multiple_input_files_all_processed(tmp_path):
+    in_dir = tmp_path / "in"
+    out_dir = tmp_path / "out"
+    in_dir.mkdir()
+    (in_dir / "one.json").write_text(
+        json.dumps({"messages": _synthetic_messages()})
+    )
+    (in_dir / "two.json").write_text(
+        json.dumps({"messages": _synthetic_messages()})
+    )
+
+    results = build_chatlog_datasets(
+        input_dir=str(in_dir), output_dir=str(out_dir), val_split=0.0
+    )
+    manifest = json.loads((out_dir / "manifest.json").read_text())
+    assert len(manifest["inputs"]) == 2
+    files = {Path(i["file"]).name for i in manifest["inputs"]}
+    assert files == {"one.json", "two.json"}
+    # Both files contributed: character records doubled vs a single-file run.
+    char_train, char_valid = results["character"]
+    assert char_train + char_valid == 2

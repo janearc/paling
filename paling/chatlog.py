@@ -27,7 +27,9 @@ extractor output (the quell logs) and must be followed exactly:
     (role=system).
   * Drop the literal "Original custom instructions no longer available" marker.
   * Drop junk rows whose ``extracted.strip()`` is shorter than ~20 chars
-    (telemetry crumbs).
+    (telemetry crumbs) -- but ONLY when ``host`` is None. Telemetry crumbs are
+    always host-less; a short host-PRESENT row is a real painter jab ("cut the
+    shit") and is the highest-signal painter data, so it is always kept.
   * Merge consecutive same-role turns. A single assistant reply sometimes
     streams as two adjacent ``host is None`` rows; concatenate them.
   * Unicode-normalize mojibake (see ``normalize_punctuation`` below, which
@@ -91,13 +93,19 @@ def parse_chatlog_messages(messages: Dict[str, Dict[str, Any]]) -> List[Dict[str
     for entry in messages.values():
         extracted = entry.get("extracted") or ""
         text = normalize_punctuation(extracted).strip()
+        host = entry.get("host")
 
-        if len(text) < MIN_TURN_CHARS:
+        # Drop truly-empty text regardless of host.
+        if not text:
+            continue
+        # Apply the telemetry-crumb length floor ONLY to host-less rows.
+        # Painter turns (host present) are always kept even when short: a
+        # 12-char "cut the shit" is the highest-signal painter data, not a
+        # telemetry crumb. Telemetry crumbs are always host-less.
+        if host is None and len(text) < MIN_TURN_CHARS:
             continue
         if CUSTOM_INSTRUCTIONS_MARKER in text:
             continue
-
-        host = entry.get("host")
 
         if host is not None and not system_assigned:
             # First substantial host-present entry is the system prompt.

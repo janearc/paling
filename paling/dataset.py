@@ -207,10 +207,11 @@ def _write_split(
     seed: int,
     label: str,
 ) -> Tuple[int, int]:
-    """Shuffle, split, and write a record list to train/valid JSONL.
+    """Shuffle, split, and write a record list into its OWN subdir.
 
-    Writes ``<label>.train.jsonl`` / ``<label>.valid.jsonl`` so multiple
-    datasets can share one output directory without clobbering each other.
+    Writes ``<output_path>/<label>/train.jsonl`` and ``valid.jsonl`` so each
+    dataset lands in a self-contained directory with standard names that
+    ``paling train --data <output_path>/<label>`` can consume directly.
     """
     if not records:
         return 0, 0
@@ -226,8 +227,10 @@ def _write_split(
         train_records = shuffled[:-1]
         val_records = shuffled[-1:]
 
-    train_file = output_path / f"{label}.train.jsonl"
-    valid_file = output_path / f"{label}.valid.jsonl"
+    split_dir = output_path / label
+    split_dir.mkdir(parents=True, exist_ok=True)
+    train_file = split_dir / "train.jsonl"
+    valid_file = split_dir / "valid.jsonl"
     with open(train_file, "w", encoding="utf-8") as f:
         for rec in train_records:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -237,7 +240,7 @@ def _write_split(
 
     logger.info(
         f"  {label}: {len(train_records)} train / {len(val_records)} valid "
-        f"-> {train_file.name}, {valid_file.name}"
+        f"-> {train_file}, {valid_file}"
     )
     return len(train_records), len(val_records)
 
@@ -248,22 +251,36 @@ def build_chatlog_datasets(
     val_split: float = 0.1,
     seed: int = 42,
     system_prompt: Optional[str] = None,
+    skip_bad: bool = False,
 ) -> Dict[str, Tuple[int, int]]:
     """Build CHARACTER and PAINTER datasets from extractor messages-JSON.
 
     This is the second hop of the chatlog pipeline. The first hop is the
     upstream extractor (chatgpt-logextract.py) which turns OpenAI's obfuscated
     share HTML into ``{"messages": {guid: {...}}}`` JSON. This consumes every
-    ``*.json`` file under ``input_dir`` and emits two datasets:
+    ``*.json`` file under ``input_dir`` and emits two datasets, each in its own
+    subdir of ``output_dir``:
 
       * CHARACTER (target/quell side) -- standard chat training data, one
         record per session: ``[system, user, assistant, ...]``.
+        Written to ``<output_dir>/character/{train,valid}.jsonl``.
       * PAINTER -- ``(preceding assistant context -> painter turn)`` pairs,
         because every host-present turn is the reactive "painter."
+        Written to ``<output_dir>/painter/{train,valid}.jsonl``.
 
-    See ``paling.chatlog`` for the reverse-engineered parsing rules. Writes
-    ``character.{train,valid}.jsonl`` and ``painter.{train,valid}.jsonl`` to
-    ``output_dir`` and returns ``{label: (n_train, n_valid)}``.
+    Each subdir uses standard ``train.jsonl`` / ``valid.jsonl`` names so
+    ``paling train --data <output_dir>/character`` (or ``/painter``) consumes
+    them directly.
+
+    Failure policy: a per-file parse failure is recorded and warned. After the
+    loop, if any file failed and ``skip_bad`` is False, this RAISES rather than
+    silently training on partial data. Set ``skip_bad=True`` to skip-and-warn
+    instead. Either way a ``manifest.json`` is written into ``output_dir``
+    recording per-file counts and dataset paths, so what landed in the datasets
+    is always explicit and auditable.
+
+    See ``paling.chatlog`` for the reverse-engineered parsing rules. Returns
+    ``{label: (n_train, n_valid)}``.
     """
     from paling import chatlog
 
@@ -283,17 +300,43 @@ def build_chatlog_datasets(
     character_records: List[Dict[str, Any]] = []
     painter_records: List[Dict[str, Any]] = []
 
+    failed: List[Dict[str, str]] = []
+    per_file: List[Dict[str, Any]] = []
+
     for jf in json_files:
         try:
             turns = chatlog.load_chatlog(jf)
         except Exception as e:
-            logger.info(f"Error parsing chatlog {jf}: {e}")
+            logger.warning(f"Failed to parse chatlog {jf}: {e}")
+            failed.append({"file": str(jf), "error": str(e)})
             continue
-        if not turns:
-            logger.info(f"  {jf.name}: no usable turns after filtering; skipped")
-            continue
-        character_records.extend(chatlog.character_records(turns, system_prompt))
-        painter_records.extend(chatlog.painter_records(turns))
+
+        char_recs = chatlog.character_records(turns, system_prompt)
+        pair_recs = chatlog.painter_records(turns)
+        character_records.extend(char_recs)
+        painter_records.extend(pair_recs)
+
+        entry = {
+            "file": str(jf),
+            "turns": len(turns),
+            "character_records": len(char_recs),
+            "painter_pairs": len(pair_recs),
+        }
+        per_file.append(entry)
+        logger.info(
+            f"  {jf.name}: {len(turns)} turns -> "
+            f"{len(char_recs)} character records, {len(pair_recs)} painter pairs"
+        )
+
+    # Fail loud on bad inputs rather than train on partial data, unless the
+    # caller explicitly opted into skip-and-warn.
+    if failed and not skip_bad:
+        names = "\n".join(f"  {f['file']}: {f['error']}" for f in failed)
+        raise ValueError(
+            f"{len(failed)} of {len(json_files)} chatlog file(s) failed to "
+            f"parse; refusing to build datasets on partial data "
+            f"(pass skip_bad=True to skip these):\n{names}"
+        )
 
     if not character_records and not painter_records:
         raise ValueError("No chatlog records generated. Check inputs.")
@@ -303,6 +346,28 @@ def build_chatlog_datasets(
         "character": _write_split(character_records, output_path, val_split, seed, "character"),
         "painter": _write_split(painter_records, output_path, val_split, seed, "painter"),
     }
+
+    manifest = {
+        "input_dir": str(input_path),
+        "output_dir": str(output_path),
+        "skip_bad": skip_bad,
+        "inputs": per_file,
+        "failed": failed,
+        "datasets": {
+            label: {
+                "train": str(output_path / label / "train.jsonl"),
+                "valid": str(output_path / label / "valid.jsonl"),
+                "n_train": n_train,
+                "n_valid": n_valid,
+            }
+            for label, (n_train, n_valid) in results.items()
+        },
+    }
+    manifest_path = output_path / "manifest.json"
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=2)
+    logger.info(f"  manifest -> {manifest_path}")
+
     return results
 
 

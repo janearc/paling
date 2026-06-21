@@ -1,15 +1,15 @@
 # paling
 
-`paling` is a local fine-tuning tool for Apple Silicon. It takes a corpus of
-markdown, builds an instruction dataset from it, runs QLoRA/LoRA training on top
-of a quantized base model with Apple's **MLX** framework, and lets you chat with
-the resulting adapter or fuse it into a standalone model.
+You have a body of writing — notes, documentation, a years-deep diary, a story.
+`paling` turns it into a model that sounds like it: a local fine-tuner that learns
+the voice *and* the knowledge of whatever you point it at, and runs the whole way
+on your Mac, with no cloud training step.
 
-It is built for one job: turning a body of writing into a model that carries the
-voice and knowledge of that writing, entirely on a Mac, with no cloud training
-step. It runs against any directory of `.md` files — notes, documentation, a
-diary, a story — but it is shaped around character and voice work as much as
-plain knowledge recall.
+Mechanically, it takes a directory of `.md` files, builds an instruction dataset
+from them, runs QLoRA/LoRA training on a quantized base model with Apple's **MLX**
+framework, and lets you chat with the resulting adapter or fuse it into a
+standalone model. It works on any markdown corpus, but it's shaped around
+*character and voice* as much as plain knowledge recall.
 
 paling exposes two surfaces over the same machinery:
 

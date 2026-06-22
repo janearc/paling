@@ -90,8 +90,7 @@ class BanchanEventProducer:
 producer = BanchanEventProducer()
 
 class BanchanExecutor:
-    """
-    Runs an external tool bundled as part of a Bento.
+    """Runs an external tool bundled as part of a Bento.
     Tool may be in any language; not expected to share runtime with paling.
     Communication: Kafka events + stdout/stderr capture.
 

@@ -14,8 +14,7 @@ def run_fuse(
     gguf_path: Optional[str] = None,
     extra_args: Optional[List[str]] = None
 ) -> int:
-    """
-    Invokes `mlx_lm fuse` via subprocess to merge LoRA adapter weights with the base model.
+    """Invokes `mlx_lm fuse` via subprocess to merge LoRA adapter weights with the base model.
     """
     cmd = [
         sys.executable, "-m", "mlx_lm", "fuse",

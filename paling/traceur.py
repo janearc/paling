@@ -31,8 +31,7 @@ except ImportError:
     HookedTransformer = None
 
 class Traceur:
-    """
-    Near-real-time model perimeter performance diagnostic tool using mechanistic
+    """Near-real-time model perimeter performance diagnostic tool using mechanistic
     interpretability to track generation trajectory.
     """
     def __init__(self):
@@ -49,8 +48,7 @@ class Traceur:
         self.trace: List[Dict[str, Any]] = []
 
     def attach(self, model: Any) -> None:
-        """
-        Prepares the model for mechanistic interpretability tracking.
+        """Prepares the model for mechanistic interpretability tracking.
         Wraps the model into a HookedTransformer if it isn't one already.
         """
         if HookedTransformer is not None and isinstance(model, HookedTransformer):
@@ -69,8 +67,7 @@ class Traceur:
                 self.model = model
 
     def hook_activations(self, text: str) -> np.ndarray:
-        """
-        Extracts latent features during generation.
+        """Extracts latent features during generation.
         Returns the residual stream of the last token.
         """
         if self.model is None:
@@ -94,8 +91,7 @@ class Traceur:
             )
 
     def update_trajectory(self, latent_vector: np.ndarray) -> float:
-        """
-        Acts as a Kalman Filter over the latent vector to track trajectory momentum.
+        """Acts as a Kalman Filter over the latent vector to track trajectory momentum.
         Calculates and returns a mathematical deviation/innovation score.
         """
         dim = latent_vector.shape[0]
@@ -124,8 +120,7 @@ class Traceur:
         return innovation_score
 
     def step(self, text: str) -> float:
-        """
-        Convenience method to process text, hook activations, update trajectory,
+        """Convenience method to process text, hook activations, update trajectory,
         and record the trace.
         """
         latent_vector = self.hook_activations(text)
@@ -141,8 +136,7 @@ class Traceur:
         return innovation_score
 
     def dump_trace(self, filepath: str) -> None:
-        """
-        Writes out a comprehensive JSON blob containing the human text,
+        """Writes out a comprehensive JSON blob containing the human text,
         deviation scores, and mechanistic interpretability states (the "trace").
         """
         config_dict = "Unknown"

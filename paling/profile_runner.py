@@ -14,8 +14,7 @@ def profile_single_file(
     model_path: Optional[str] = None,
     include_git: bool = True
 ) -> bool:
-    """
-    Profiles a single markdown file and saves its taxonometry JSON.
+    """Profiles a single markdown file and saves its taxonometry JSON.
     """
     try:
         if not file_path.exists():
@@ -84,8 +83,7 @@ def profile_directory(
     include_git: bool = True,
     fix_only: bool = False
 ):
-    """
-    Profiles all markdown files in a directory recursively.
+    """Profiles all markdown files in a directory recursively.
     """
     if not input_dir.exists() or not input_dir.is_dir():
         raise ValueError(f"Input directory '{input_dir}' is not valid.")

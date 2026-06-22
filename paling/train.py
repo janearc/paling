@@ -17,8 +17,7 @@ def run_training(
     fine_tune_type: str = "lora",
     extra_args: Optional[List[str]] = None
 ) -> int:
-    """
-    Invokes `mlx_lm lora` via subprocess to run QLoRA / LoRA training.
+    """Invokes `mlx_lm lora` via subprocess to run QLoRA / LoRA training.
     """
     # Verify dataset files exist
     data_path = Path(data_dir)

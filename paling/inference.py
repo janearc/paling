@@ -183,9 +183,9 @@ def run_interactive_chat(
     adapter_path: Optional[str] = None,
     system_prompt: Optional[str] = None,
 ):
-    """
-    Launches an interactive shell chat session.
-    """
+    """Run an interactive shell chat session against the model (optionally with an adapter)."""
+    # build the session up front so a bad model/adapter path fails immediately
+    # with a clear message, rather than after the prompt loop has started.
     try:
         session = ChatSession(model_path, adapter_path, system_prompt)
     except Exception as e:

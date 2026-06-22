@@ -8,16 +8,17 @@ from typing import List, Dict, Any, Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
-# A default system prompt for knowledge injection
+# Default system prompt for the knowledge-injection training pairs. It frames the
+# model as answering FROM the user's own notes, so the fine-tune learns to ground
+# its answers in that material instead of inventing. Override per dataset when a
+# sharper persona is wanted.
 DEFAULT_SYSTEM_PROMPT = (
-    "You are a helpful assistant with access to the user's personal notes and "
-    "documentation. Use this knowledge to answer questions accurately and concisely."
+    "Answer using the user's personal notes and documents as your source of "
+    "truth. Stay faithful to what they actually say; do not invent detail."
 )
 
 def parse_markdown_to_sections(text: str, filepath: Path) -> List[Dict[str, Any]]:
-    """
-    Parses a markdown file into hierarchical sections based on header markers.
-    """
+    """Parse a markdown file into hierarchical sections by header level."""
     lines = text.split('\n')
     sections = []
     
@@ -85,8 +86,7 @@ def parse_markdown_to_sections(text: str, filepath: Path) -> List[Dict[str, Any]
     return sections
 
 def chunk_text_by_words(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
-    """
-    Splits text into overlapping chunks based on word counts.
+    """Splits text into overlapping chunks based on word counts.
     """
     words = text.split()
     if not words:
@@ -104,9 +104,7 @@ def chunk_text_by_words(text: str, chunk_size: int = 500, overlap: int = 50) -> 
 def chunk_text_by_tokens(
     text: str, tokenizer: Any, chunk_size: int = 1024, overlap: int = 128
 ) -> List[str]:
-    """
-    Splits text into overlapping chunks using a tokenizer.
-    """
+    """Split text into overlapping token-windowed chunks."""
     tokens = tokenizer.encode(text)
     if not tokens:
         return []
@@ -122,8 +120,7 @@ def chunk_text_by_tokens(
     return chunks
 
 def extract_markdown_files(input_dir: Path, exclude_patterns: List[str]) -> List[Path]:
-    """
-    Finds all markdown files recursively, ignoring excluded directories.
+    """Finds all markdown files recursively, ignoring excluded directories.
     """
     markdown_files = []
     for root, dirs, files in os.walk(input_dir):
@@ -138,8 +135,7 @@ def extract_markdown_files(input_dir: Path, exclude_patterns: List[str]) -> List
     return markdown_files
 
 def parse_rlhf_directory(rlhf_dir: Path) -> List[Dict[str, str]]:
-    """
-    Parses RLHF reviews from a directory, collecting approved QA pairs.
+    """Parses RLHF reviews from a directory, collecting approved QA pairs.
     """
     rlhf_data = []
     if not rlhf_dir.exists():
@@ -182,8 +178,7 @@ def parse_rlhf_directory(rlhf_dir: Path) -> List[Dict[str, str]]:
     return rlhf_data
 
 def parse_taxonometry_directory(tax_dir: Path) -> List[Dict[str, Any]]:
-    """
-    Parses taxonometry metrics from a directory.
+    """Parses taxonometry metrics from a directory.
     """
     tax_data = []
     if not tax_dir.exists():

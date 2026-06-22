@@ -122,8 +122,7 @@ class RarityAnalyzer:
         return rare_count / total
 
     def extract_rare_terms_heuristically(self, context: str) -> List[str]:
-        """
-        Extracts rare words using purely offline lexical/statistical rules
+        """Extracts rare words using purely offline lexical/statistical rules
         (Zipf frequency + POS tags).
         Requires zero model execution and runs in milliseconds.
         """
@@ -233,8 +232,7 @@ def profile_document(
     token_estimator: Optional[Callable[[str], int]] = None,
     local_logger: Optional[Any] = None
 ) -> TaxonometryProfile:
-    """
-    Profiles a markdown string and returns a TaxonometryProfile taxonometry object.
+    """Profiles a markdown string and returns a TaxonometryProfile taxonometry object.
     """
     log = local_logger or logger
     

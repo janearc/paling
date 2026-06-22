@@ -2,8 +2,7 @@ import re
 import json
 import logging
 from pathlib import Path
-from functools import lru_cache
-from typing import List, Optional, Any, Callable, Tuple
+from typing import List, Optional, Any, Callable
 
 import spacy
 import torch
@@ -12,7 +11,7 @@ from pydantic import BaseModel, Field
 from wonderlib.benchmark import Benchmark
 from wonderlib.markdown_xml import markdown_to_xml
 from wordfreq import zipf_frequency
-from wonderlib.git_stats import GitStats, get_git_stats
+from wonderlib.git_stats import GitStats
 
 # Setup local logger
 logger = logging.getLogger("wonderlib")
@@ -123,8 +122,8 @@ class RarityAnalyzer:
         return rare_count / total
 
     def extract_rare_terms_heuristically(self, context: str) -> List[str]:
-        """
-        Extracts rare words using purely offline lexical/statistical rules (Zipf frequency + POS tags).
+        """Extracts rare words using purely offline lexical/statistical rules
+        (Zipf frequency + POS tags).
         Requires zero model execution and runs in milliseconds.
         """
         seen = set()
@@ -161,7 +160,9 @@ class RarityAnalyzer:
         
         # If no model is provided, default to the fast, local lexical heuristic
         if not self.model or not self.tokenizer:
-            log.debug("No model provided for rare term extraction. Using lexical POS/Zipf heuristics.")
+            log.debug(
+                "No model provided for rare term extraction. Using lexical POS/Zipf heuristics."
+            )
             terms = self.extract_rare_terms_heuristically(context)
             joined = ", ".join(terms)
             self.benchmark.output_tokens = len(joined.split()) * 4 // 3
@@ -231,8 +232,7 @@ def profile_document(
     token_estimator: Optional[Callable[[str], int]] = None,
     local_logger: Optional[Any] = None
 ) -> TaxonometryProfile:
-    """
-    Profiles a markdown string and returns a TaxonometryProfile taxonometry object.
+    """Profiles a markdown string and returns a TaxonometryProfile taxonometry object.
     """
     log = local_logger or logger
     
@@ -271,7 +271,7 @@ def profile_document(
         benchmark=analyzer.benchmark,
     )
 
-def DataToTaxonometryCorpus(data: str) -> TaxonometryCorpus:
+def data_to_taxonometry_corpus(data: str) -> TaxonometryCorpus:
     root = Path(data)
     files = root.glob("**/*-taxonometry.json")
     signatures = []

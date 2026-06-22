@@ -1,4 +1,3 @@
-import re
 from typing import List
 from xml.etree import ElementTree as ET
 
@@ -6,8 +5,7 @@ import markdown
 from bs4 import BeautifulSoup
 
 def markdown_to_xml(md_text: str) -> ET.Element:
-    """
-    Converts Markdown text into an XML tree for structured parsing.
+    """Converts Markdown text into an XML tree for structured parsing.
     Automatically unwraps hard-wrapped paragraphs and strips inline formatting tags.
     """
     # Step 1: Normalize line endings

@@ -266,7 +266,7 @@ def profile_bento(bento_path) -> ProfileReport:
     # lazy import: profiling pulls in spacy/torch/wordfreq, which the rest of the
     # daemon (create/ingest/verify) has no reason to load.
     from paling.profile_runner import profile_single_file
-    from wonderlib.profiling import DataToTaxonometryCorpus
+    from wonderlib.profiling import data_to_taxonometry_corpus
 
     raw = path / "raw_data"
     tax_dir = path / "taxonometry"
@@ -288,7 +288,7 @@ def profile_bento(bento_path) -> ProfileReport:
         out_dir = sig_dir / f.relative_to(raw).parent
         profile_single_file(f, out_dir, model_path=None, include_git=False)
 
-    corpus = DataToTaxonometryCorpus(str(sig_dir))
+    corpus = data_to_taxonometry_corpus(str(sig_dir))
     summary = _summarize_taxonometry(corpus)
     _safe_write_json(tax_dir / "corpus.json", summary.model_dump())
 
@@ -625,7 +625,7 @@ def generate_questions(bento_path) -> QuestionsReport:
             try:
                 completion = modelclient.generate_seq2seq(
                     model, prompt, temperature=0.8, top_p=0.95, top_k=75)
-            except modelclient.ModelUnavailable as e:
+            except modelclient.ModelUnavailableError as e:
                 # fail closed: a missing generation model is fatal to the stage,
                 # not a context to silently drop.
                 issues.append(f"model {model!r} unavailable: {e}")
@@ -742,7 +742,7 @@ def generate_answers(bento_path) -> AnswersReport:
                 try:
                     ans = modelclient.generate_seq2seq(
                         model, prompt, temperature=0.9, top_p=0.95, top_k=100).strip()
-                except modelclient.ModelUnavailable as e:
+                except modelclient.ModelUnavailableError as e:
                     issues.append(f"model {model!r} unavailable: {e}")
                     return AnswersReport(bento_id=path.name, generated=False,
                                          issues=issues, model=model)
@@ -882,7 +882,7 @@ def curate_review(bento_path) -> CurationReport:
             # one model call: grade + synthesize the best answer for this question.
             try:
                 reply = modelclient.generate(model, prompt)
-            except modelclient.ModelUnavailable as e:
+            except modelclient.ModelUnavailableError as e:
                 issues.append(f"model {model!r} unavailable: {e}")
                 return CurationReport(bento_id=path.name, curated=False,
                                       issues=issues, model=model)

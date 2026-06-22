@@ -10,16 +10,21 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 # Ensure the parent directory is in python path to import our modules
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from paling.dataset import build_datasets, DEFAULT_SYSTEM_PROMPT
-from paling.painter import run_painter
-from paling.train import run_training
-from paling.inference import run_interactive_chat
-from paling.fuse import run_fuse
-from paling.profile_runner import profile_single_file, profile_directory
+# These imports must follow the sys.path.insert above so the package resolves
+# when cli.py is run as a script; hence the E402 suppressions.
+from paling.dataset import build_datasets, DEFAULT_SYSTEM_PROMPT  # noqa: E402
+from paling.painter import run_painter  # noqa: E402
+from paling.train import run_training  # noqa: E402
+from paling.inference import run_interactive_chat  # noqa: E402
+from paling.fuse import run_fuse  # noqa: E402
+from paling.profile_runner import profile_single_file, profile_directory  # noqa: E402
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Paling CLI: QLoRA Fine-tuning and Inference tool for Markdown Knowledge Bases on Apple Silicon",
+        description=(
+            "Paling CLI: QLoRA Fine-tuning and Inference tool for "
+            "Markdown Knowledge Bases on Apple Silicon"
+        ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     
@@ -31,7 +36,9 @@ def main():
         help="Create resources (e.g. bento)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    create_subparsers = parser_create.add_subparsers(dest="create_command", help="Resource to create")
+    create_subparsers = parser_create.add_subparsers(
+        dest="create_command", help="Resource to create"
+    )
     
     parser_bento = create_subparsers.add_parser(
         "bento",
@@ -79,7 +86,10 @@ def main():
     parser_prep.add_argument(
         "--input-dir", "-i",
         required=True,
-        help="Directory of markdown files (.md) to process; in 'chatlog' mode, a directory of extractor messages-JSON files (or a single .json file)"
+        help=(
+            "Directory of markdown files (.md) to process; in 'chatlog' mode, a "
+            "directory of extractor messages-JSON files (or a single .json file)"
+        )
     )
     parser_prep.add_argument(
         "--output-dir", "-o",
@@ -90,7 +100,11 @@ def main():
         "--mode", "-m",
         choices=["sections", "raw_text", "qa_pairs", "chatlog"],
         default="sections",
-        help="Preparation mode: 'sections' (split by headers to build QA pairs), 'raw_text' (sliding window chunks), 'qa_pairs' (full file QA), 'chatlog' (extractor messages-JSON -> character + painter chat data)"
+        help=(
+            "Preparation mode: 'sections' (split by headers to build QA pairs), "
+            "'raw_text' (sliding window chunks), 'qa_pairs' (full file QA), "
+            "'chatlog' (extractor messages-JSON -> character + painter chat data)"
+        )
     )
     parser_prep.add_argument(
         "--chunk-size", "-c",
@@ -112,15 +126,24 @@ def main():
     )
     parser_prep.add_argument(
         "--model-path",
-        help="Optional model path or HF repo ID to load the tokenizer for precise token-based chunking in raw_text mode"
+        help=(
+            "Optional model path or HF repo ID to load the tokenizer for "
+            "precise token-based chunking in raw_text mode"
+        )
     )
     parser_prep.add_argument(
         "--rlhf-dir",
-        help="Optional path to directory containing RLHF JSON review files (*-review.json) to incorporate"
+        help=(
+            "Optional path to directory containing RLHF JSON review files "
+            "(*-review.json) to incorporate"
+        )
     )
     parser_prep.add_argument(
         "--taxonometry-dir",
-        help="Optional path to directory containing taxonometry JSON files (*-taxonometry.json) to incorporate"
+        help=(
+            "Optional path to directory containing taxonometry JSON files "
+            "(*-taxonometry.json) to incorporate"
+        )
     )
     parser_prep.add_argument(
         "--system-prompt", "-s",
@@ -241,7 +264,10 @@ def main():
     )
     parser_fuse.add_argument(
         "--gguf-path",
-        help="Filename to save the exported GGUF model (defaults to ggml-model-f16.gguf under save-path)"
+        help=(
+            "Filename to save the exported GGUF model "
+            "(defaults to ggml-model-f16.gguf under save-path)"
+        )
     )
     # Subcommand: paint
     parser_paint = subparsers.add_parser(
@@ -323,7 +349,10 @@ def main():
     # Subcommand: profile
     parser_prof = subparsers.add_parser(
         "profile",
-        help="Generate taxonometric profile of documents using Zipf average, part-of-speech complexity, and rare term extraction",
+        help=(
+            "Generate taxonometric profile of documents using Zipf average, "
+            "part-of-speech complexity, and rare term extraction"
+        ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser_prof.add_argument(
@@ -339,7 +368,10 @@ def main():
     parser_prof.add_argument(
         "--model-path",
         default=None,
-        help="Optional Hugging Face model ID or path to local MLX model directory for LLM-based rare term extraction (runs offline lexical heuristic by default)"
+        help=(
+            "Optional Hugging Face model ID or path to local MLX model directory for "
+            "LLM-based rare term extraction (runs offline lexical heuristic by default)"
+        )
     )
     parser_prof.add_argument(
         "--no-git",
@@ -457,8 +489,14 @@ def main():
         adapter_path = args.adapter_path
         if adapter_path:
             p = Path(adapter_path)
-            if not (p / "adapter_config.json").exists() and not (p / "adapters.safetensors").exists():
-                logger.info(f"LoRA adapter files not found in '{adapter_path}'. Running base model only.")
+            if (
+                not (p / "adapter_config.json").exists()
+                and not (p / "adapters.safetensors").exists()
+            ):
+                logger.info(
+                    f"LoRA adapter files not found in '{adapter_path}'. "
+                    "Running base model only."
+                )
                 adapter_path = None
                 
         run_interactive_chat(
@@ -500,7 +538,10 @@ def main():
                 fix_only=args.fix_only
             )
         else:
-            logger.error(f"Error: Input path '{args.input}' does not exist or is neither a file nor a directory.")
+            logger.error(
+                f"Error: Input path '{args.input}' does not exist or is "
+                "neither a file nor a directory."
+            )
             sys.exit(1)
 
     elif args.command == "paint":

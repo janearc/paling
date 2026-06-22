@@ -1,7 +1,6 @@
 import subprocess
 import sys
 import logging
-from pathlib import Path
 from typing import Optional, List
 
 logger = logging.getLogger(__name__)
@@ -15,8 +14,7 @@ def run_fuse(
     gguf_path: Optional[str] = None,
     extra_args: Optional[List[str]] = None
 ) -> int:
-    """
-    Invokes `mlx_lm fuse` via subprocess to merge LoRA adapter weights with the base model.
+    """Invokes `mlx_lm fuse` via subprocess to merge LoRA adapter weights with the base model.
     """
     cmd = [
         sys.executable, "-m", "mlx_lm", "fuse",
@@ -62,7 +60,8 @@ def run_fuse(
             if not line and process.poll() is not None:
                 break
             if line:
-                sys.stdout.write(str(line)); sys.stdout.flush()
+                sys.stdout.write(str(line))
+                sys.stdout.flush()
                 
         process.wait()
         return process.returncode

@@ -8,13 +8,17 @@ from typing import List, Dict, Any, Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
-# A default system prompt for knowledge injection
-DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant with access to the user's personal notes and documentation. Use this knowledge to answer questions accurately and concisely."
+# Default system prompt for the knowledge-injection training pairs. It frames the
+# model as answering FROM the user's own notes, so the fine-tune learns to ground
+# its answers in that material instead of inventing. Override per dataset when a
+# sharper persona is wanted.
+DEFAULT_SYSTEM_PROMPT = (
+    "Answer using the user's personal notes and documents as your source of "
+    "truth. Stay faithful to what they actually say; do not invent detail."
+)
 
 def parse_markdown_to_sections(text: str, filepath: Path) -> List[Dict[str, Any]]:
-    """
-    Parses a markdown file into hierarchical sections based on header markers.
-    """
+    """Parse a markdown file into hierarchical sections by header level."""
     lines = text.split('\n')
     sections = []
     
@@ -33,7 +37,11 @@ def parse_markdown_to_sections(text: str, filepath: Path) -> List[Dict[str, Any]
             # Save the previous section if it has content or isn't the empty intro
             content_str = "\n".join(current_content).strip()
             if content_str:
-                headers_path = [current_headers[i] for i in range(1, current_level + 1) if current_headers[i]]
+                headers_path = [
+                    current_headers[i]
+                    for i in range(1, current_level + 1)
+                    if current_headers[i]
+                ]
                 sections.append({
                     "file_path": str(filepath),
                     "file_name": filepath.name,
@@ -61,7 +69,11 @@ def parse_markdown_to_sections(text: str, filepath: Path) -> List[Dict[str, Any]
     # Save the last section
     content_str = "\n".join(current_content).strip()
     if content_str:
-        headers_path = [current_headers[i] for i in range(1, current_level + 1) if current_headers[i]]
+        headers_path = [
+            current_headers[i]
+            for i in range(1, current_level + 1)
+            if current_headers[i]
+        ]
         sections.append({
             "file_path": str(filepath),
             "file_name": filepath.name,
@@ -74,8 +86,7 @@ def parse_markdown_to_sections(text: str, filepath: Path) -> List[Dict[str, Any]
     return sections
 
 def chunk_text_by_words(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
-    """
-    Splits text into overlapping chunks based on word counts.
+    """Splits text into overlapping chunks based on word counts.
     """
     words = text.split()
     if not words:
@@ -90,10 +101,10 @@ def chunk_text_by_words(text: str, chunk_size: int = 500, overlap: int = 50) -> 
         i += chunk_size - overlap
     return chunks
 
-def chunk_text_by_tokens(text: str, tokenizer: Any, chunk_size: int = 1024, overlap: int = 128) -> List[str]:
-    """
-    Splits text into overlapping chunks using a tokenizer.
-    """
+def chunk_text_by_tokens(
+    text: str, tokenizer: Any, chunk_size: int = 1024, overlap: int = 128
+) -> List[str]:
+    """Split text into overlapping token-windowed chunks."""
     tokens = tokenizer.encode(text)
     if not tokens:
         return []
@@ -109,8 +120,7 @@ def chunk_text_by_tokens(text: str, tokenizer: Any, chunk_size: int = 1024, over
     return chunks
 
 def extract_markdown_files(input_dir: Path, exclude_patterns: List[str]) -> List[Path]:
-    """
-    Finds all markdown files recursively, ignoring excluded directories.
+    """Finds all markdown files recursively, ignoring excluded directories.
     """
     markdown_files = []
     for root, dirs, files in os.walk(input_dir):
@@ -125,8 +135,7 @@ def extract_markdown_files(input_dir: Path, exclude_patterns: List[str]) -> List
     return markdown_files
 
 def parse_rlhf_directory(rlhf_dir: Path) -> List[Dict[str, str]]:
-    """
-    Parses RLHF reviews from a directory, collecting approved QA pairs.
+    """Parses RLHF reviews from a directory, collecting approved QA pairs.
     """
     rlhf_data = []
     if not rlhf_dir.exists():
@@ -169,8 +178,7 @@ def parse_rlhf_directory(rlhf_dir: Path) -> List[Dict[str, str]]:
     return rlhf_data
 
 def parse_taxonometry_directory(tax_dir: Path) -> List[Dict[str, Any]]:
-    """
-    Parses taxonometry metrics from a directory.
+    """Parses taxonometry metrics from a directory.
     """
     tax_data = []
     if not tax_dir.exists():
@@ -446,7 +454,10 @@ def build_datasets(
                     
                     # Create prompt mapping hierarchy
                     path_str = " -> ".join(headers_path) if headers_path else header
-                    prompt = f"In the document '{sec['file_name']}' under '{path_str}', what is written?"
+                    prompt = (
+                        f"In the document '{sec['file_name']}' under "
+                        f"'{path_str}', what is written?"
+                    )
                     
                     record = {
                         "messages": [
@@ -466,7 +477,9 @@ def build_datasets(
                     
                 for idx, chunk in enumerate(chunks):
                     # Add document context at the top of the chunk to ground it
-                    grounded_text = f"Document: {rel_path}\nChunk {idx+1}/{len(chunks)}\n---\n{chunk}"
+                    grounded_text = (
+                        f"Document: {rel_path}\nChunk {idx+1}/{len(chunks)}\n---\n{chunk}"
+                    )
                     dataset_records.append({"text": grounded_text})
                     
             elif mode == "qa_pairs":
@@ -517,7 +530,10 @@ def build_datasets(
             if mode in ["sections", "qa_pairs"]:
                 # Record 1: Profile overview
                 prompt = f"What is the taxonometric profile of the document '{title}'?"
-                response = f"The document '{title}' has a Zipf average of {zipf_avg:.3f} and rarity position of {rarity_pos:.5f}."
+                response = (
+                    f"The document '{title}' has a Zipf average of {zipf_avg:.3f} "
+                    f"and rarity position of {rarity_pos:.5f}."
+                )
                 if rare_terms:
                     response += f" Its rare terms include: {', '.join(rare_terms)}."
                 record1 = {
@@ -532,7 +548,10 @@ def build_datasets(
                 # Record 2: Rare terms if available
                 if rare_terms:
                     prompt2 = f"List the rare terms associated with the document '{title}'."
-                    response2 = f"The rare terms associated with the document '{title}' are: {', '.join(rare_terms)}."
+                    response2 = (
+                        f"The rare terms associated with the document '{title}' "
+                        f"are: {', '.join(rare_terms)}."
+                    )
                     record2 = {
                         "messages": [
                             {"role": "system", "content": system_prompt},
@@ -543,7 +562,11 @@ def build_datasets(
                     dataset_records.append(record2)
                     
             elif mode == "raw_text":
-                text_block = f"Taxonometry Profile for '{title}':\n- Zipf Average: {zipf_avg:.3f}\n- Rarity Position: {rarity_pos:.5f}"
+                text_block = (
+                    f"Taxonometry Profile for '{title}':\n"
+                    f"- Zipf Average: {zipf_avg:.3f}\n"
+                    f"- Rarity Position: {rarity_pos:.5f}"
+                )
                 if rare_terms:
                     text_block += f"\n- Rare Terms: {', '.join(rare_terms)}"
                 dataset_records.append({"text": text_block})

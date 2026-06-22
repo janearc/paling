@@ -5,10 +5,10 @@ from sklearn.neighbors import kneighbors_graph
 from typing import List, Dict, Any, Union
 
 class TopologyBanchan:
-    """
-    A banchan class for Lexical Cartography (Step 1 of Edge Exploration).
-    Responsible for ingesting embeddings, projecting, clustering, and 
-    building a topology graph for visual rendering.
+    """Lexical Cartography (step 1 of edge exploration).
+
+    Ingests embeddings, projects them, clusters, and builds a topology graph for
+    visual rendering.
     """
     def __init__(
         self,
@@ -34,15 +34,15 @@ class TopologyBanchan:
         self.knn_graph = None
 
     def ingest(self, embeddings: Union[np.ndarray, List[List[float]]]) -> "TopologyBanchan":
+        """Ingest a dataset of conversational embeddings.
         """
-        Ingest a dataset of conversational embeddings.
-        """
-        self.embeddings = np.array(embeddings) if not isinstance(embeddings, np.ndarray) else embeddings
+        self.embeddings = (
+            np.array(embeddings) if not isinstance(embeddings, np.ndarray) else embeddings
+        )
         return self
 
     def project(self) -> "TopologyBanchan":
-        """
-        Project embeddings via UMAP.
+        """Project embeddings via UMAP.
         """
         if self.embeddings is None:
             raise ValueError("No embeddings to project. Call ingest() first.")
@@ -57,8 +57,7 @@ class TopologyBanchan:
         return self
 
     def cluster(self) -> "TopologyBanchan":
-        """
-        Cluster embeddings via HDBSCAN.
+        """Cluster embeddings via HDBSCAN.
         Uses 'eom' (Excess of Mass) for multidimensional definitions of clusters
         with variable density thresholds, rather than a single distance threshold.
         """
@@ -77,8 +76,7 @@ class TopologyBanchan:
         return self
 
     def connect(self) -> "TopologyBanchan":
-        """
-        Connect the topology via a scikit-learn KNN graph on the projected space.
+        """Connect the topology via a scikit-learn KNN graph on the projected space.
         """
         if self.projection is None:
             raise ValueError("No projection to connect. Call project() first.")
@@ -92,12 +90,12 @@ class TopologyBanchan:
         return self
 
     def export(self) -> Dict[str, Any]:
-        """
-        Define the output of this class to be a data structure suitable 
-        for a custom visual rendering engine.
-        """
+        """Shape this banchan's result for the custom visual rendering engine."""
         if self.projection is None or self.cluster_labels is None or self.knn_graph is None:
-            raise ValueError("Pipeline not fully executed. Run ingest().project().cluster().connect() first.")
+            raise ValueError(
+                "Pipeline not fully executed. "
+                "Run ingest().project().cluster().connect() first."
+            )
         
         nodes = []
         for i in range(len(self.projection)):

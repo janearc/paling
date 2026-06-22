@@ -7,12 +7,10 @@ import json
 from paling.dataset import parse_markdown_to_sections, chunk_text_by_words, build_datasets
 from wonderlib.markdown_xml import markdown_to_xml
 from wonderlib.profiling import RarityAnalyzer, profile_document
-from wonderlib.git_stats import GitStats, GitCommitEntry
 
 class TestPalingAndWonderLib(unittest.TestCase):
     def test_markdown_parsing(self):
-        """
-        Verify that markdown headers are parsed correctly into hierarchical sections.
+        """Verify that markdown headers are parsed correctly into hierarchical sections.
         """
         md_text = (
             "# Title\n"
@@ -38,8 +36,7 @@ class TestPalingAndWonderLib(unittest.TestCase):
         self.assertEqual(sections[2]["headers_path"], ["Title", "Section 1", "Sub 1.1"])
 
     def test_text_chunking(self):
-        """
-        Verify word-based text chunker sliding window.
+        """Verify word-based text chunker sliding window.
         """
         text = "one two three four five six seven eight nine ten"
         chunks = chunk_text_by_words(text, chunk_size=4, overlap=2)
@@ -55,8 +52,7 @@ class TestPalingAndWonderLib(unittest.TestCase):
         self.assertEqual(chunks[3], "seven eight nine ten")
 
     def test_markdown_to_xml(self):
-        """
-        Verify markdown is correctly converted to clean XML.
+        """Verify markdown is correctly converted to clean XML.
         """
         md_text = "This is a **bold** paragraph.\n\nAnother paragraph."
         xml_root = markdown_to_xml(md_text)
@@ -67,8 +63,7 @@ class TestPalingAndWonderLib(unittest.TestCase):
         self.assertIn("bold", paragraphs[0].text)
 
     def test_zipf_scores(self):
-        """
-        Verify Zipf frequency scoring and clustering.
+        """Verify Zipf frequency scoring and clustering.
         """
         analyzer = RarityAnalyzer(token_count=10, model=MagicMock(), tokenizer=MagicMock())
         
@@ -83,8 +78,7 @@ class TestPalingAndWonderLib(unittest.TestCase):
         self.assertGreater(cluster[2], 0)
 
     def test_profile_document_offline(self):
-        """
-        Test document profiling using model-free lexical heuristics.
+        """Test document profiling using model-free lexical heuristics.
         """
         md_content = "# Test Document\n\nThis is a simple note with some terms."
         profile = profile_document(
@@ -97,8 +91,7 @@ class TestPalingAndWonderLib(unittest.TestCase):
         self.assertIsInstance(profile.rare_terms, list)
 
     def test_profile_document_with_mock_model(self):
-        """
-        Test document profiling using a mocked LLM analyzer.
+        """Test document profiling using a mocked LLM analyzer.
         """
         mock_model = MagicMock()
         mock_tokenizer = MagicMock()
@@ -118,8 +111,7 @@ class TestPalingAndWonderLib(unittest.TestCase):
             self.assertEqual(profile.rare_terms, ["MockTermA", "MockTermB"])
 
     def test_dataset_compilation_with_rlhf_and_tax(self):
-        """
-        Test dataset builder combining markdown, RLHF, and Taxonometry data.
+        """Test dataset builder combining markdown, RLHF, and Taxonometry data.
         """
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

@@ -61,7 +61,7 @@ def test_generate_answers_fails_closed_when_model_unavailable(tmp_path, monkeypa
     bpath = _bento_with_questions(tmp_path)
 
     def boom(model, prompt, **opts):
-        raise modelclient.ModelUnavailable("no seq2seq backend")
+        raise modelclient.ModelUnavailableError("no seq2seq backend")
 
     monkeypatch.setattr(modelclient, "generate_seq2seq", boom)
     report = bento.generate_answers(bpath)

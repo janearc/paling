@@ -79,7 +79,7 @@ def test_curate_fails_closed_when_model_unavailable(tmp_path, monkeypatch):
     bpath = _bento_with_review(tmp_path)
 
     def boom(model, prompt, **opts):
-        raise modelclient.ModelUnavailable("no backend")
+        raise modelclient.ModelUnavailableError("no backend")
 
     monkeypatch.setattr(modelclient, "generate", boom)
     report = bento.curate_review(bpath)

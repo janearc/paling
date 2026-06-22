@@ -36,7 +36,7 @@ def test_build_training_data_keeps_only_approved(tmp_path):
     train = (bpath / "output" / "train.jsonl")
     valid = (bpath / "output" / "valid.jsonl")
     assert train.is_file() and valid.is_file()
-    lines = [l for l in (train.read_text() + valid.read_text()).splitlines() if l.strip()]
+    lines = [ln for ln in (train.read_text() + valid.read_text()).splitlines() if ln.strip()]
     assert len(lines) == 1
     rec = json.loads(lines[0])
     roles = [m["role"] for m in rec["messages"]]
@@ -52,8 +52,8 @@ def test_build_training_data_falls_back_to_first_answer(tmp_path):
     ])
     report = bento.build_training_data(bpath)
     assert report.built is True
-    line = [l for l in (bpath / "output" / "train.jsonl").read_text().splitlines() if l.strip()]
-    line += [l for l in (bpath / "output" / "valid.jsonl").read_text().splitlines() if l.strip()]
+    line = [ln for ln in (bpath / "output" / "train.jsonl").read_text().splitlines() if ln.strip()]
+    line += [ln for ln in (bpath / "output" / "valid.jsonl").read_text().splitlines() if ln.strip()]
     rec = json.loads(line[0])
     assert rec["messages"][2]["content"] == "first candidate"
 
@@ -70,7 +70,8 @@ def test_build_training_data_gated_on_curated(tmp_path):
 
 def test_build_training_data_no_approved_pairs(tmp_path):
     bpath = _bento_with_curated(tmp_path, [
-        {"question": "q?", "answers": ["a"], "rating": 1, "synthesis_answer": "a", "approved": False},
+        {"question": "q?", "answers": ["a"], "rating": 1,
+         "synthesis_answer": "a", "approved": False},
     ])
     report = bento.build_training_data(bpath)
     assert report.built is False

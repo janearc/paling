@@ -1,50 +1,58 @@
-# reward.py - Simple reward scoring for Painter LLM
+"""Reward scoring for the Painter LLM.
 
-"""A very lightweight reward model used by the Painter LLM.
+Scores a candidate response in [0, 1] on whether it earns a place in the
+character's voice. Three signals: emotional resonance (the main one -- a character
+who only says flat, neutral things is lifeless), length (longer tends to be
+richer), and novelty (an exact repeat earns nothing). Callers threshold the score
+(e.g. 0.6) to keep the high-reward responses.
 
-In production this would be replaced by a trained neural model that
-estimates emotional resonance, surprise, and narrative impact. For now we
-use a deterministic heuristic that scores a response based on:
-
-1. Length (longer responses tend to be richer).
-2. Presence of vivid cue words (e.g. "star", "fire", "death", ...).
-3. A simple novelty check – penalise responses that are exact repeats.
-
-The function returns a float in the range [0, 1]. Callers can decide a
-threshold (e.g. 0.6) for what constitutes a "high‑reward" interaction.
+Emotional resonance is measured with sentiment analysis, not a keyword list, so a
+response that is strongly felt -- tender, grieving, joyful, afraid -- scores high
+whatever its subject, and nothing is rewarded simply for being lurid.
 """
 
-from typing import Set
+from typing import Optional, Set
 
-# Pre‑defined cue words that signal vivid, emotionally charged language.
-_CUE_WORDS = {"star", "fire", "death", "copper", "annihilation", "burn", "lava", "blood", "scream", "void"}
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-# Keep a global set of seen responses to encourage novelty.
+# vader is a lexicon + rule-based sentiment scorer: no model, no network. Created
+# lazily so importing this module stays cheap.
+_ANALYZER: Optional[SentimentIntensityAnalyzer] = None
+
+# responses scored so far, so an exact repeat earns no novelty bonus.
 _SEEN: Set[str] = set()
 
 
-def score_response(response: str) -> float:
-    """Score a model response.
+def _analyzer() -> SentimentIntensityAnalyzer:
+    global _ANALYZER
+    if _ANALYZER is None:
+        _ANALYZER = SentimentIntensityAnalyzer()
+    return _ANALYZER
 
-    The score is a weighted combination of length, cue‑word coverage, and
-    novelty. Returned value is clamped to [0, 1].
-    """
+
+def _emotional_charge(text: str) -> float:
+    """Strength of feeling in `text`, in [0, 1], regardless of its direction."""
+    # |compound| is how strong the sentiment is either way; (1 - neu) is how much
+    # of the text carries feeling at all. Blended, a strongly-felt line scores high
+    # and flat prose scores low.
+    s = _analyzer().polarity_scores(text)
+    return min(0.5 * abs(s["compound"]) + 0.5 * (1.0 - s["neu"]), 1.0)
+
+
+def score_response(response: str) -> float:
+    """Score a response in [0, 1] from its emotional resonance, length, and novelty."""
     if not response:
         return 0.0
 
-    # Normalise to lower case for cue detection.
-    lower = response.lower()
-
-    # Length score: map 0‑200 characters to 0‑0.4.
+    # length: 0-200 characters maps to 0-0.4.
     length_score = min(len(response) / 200.0, 1.0) * 0.4
 
-    # Cue word score: proportion of cue words present (max 0.4).
-    cues_found = sum(1 for w in _CUE_WORDS if w in lower)
-    cue_score = min(cues_found / len(_CUE_WORDS), 1.0) * 0.4
+    # emotional resonance via sentiment intensity, up to 0.4.
+    emotional_score = _emotional_charge(response) * 0.4
 
-    # Novelty score: 0.2 if response hasn't been seen before.
+    # novelty: 0.2 the first time a response is seen, 0 on any exact repeat.
+    lower = response.lower()
     novelty_score = 0.0 if lower in _SEEN else 0.2
     _SEEN.add(lower)
 
-    total = length_score + cue_score + novelty_score
-    return min(total, 1.0)
+    return min(length_score + emotional_score + novelty_score, 1.0)

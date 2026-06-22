@@ -79,8 +79,8 @@ def test_generate_raises_when_unavailable(monkeypatch):
     monkeypatch.setattr(modelclient.urllib.request, "urlopen", fake_urlopen)
     try:
         modelclient.generate("mistral", "hi")
-        assert False, "expected ModelUnavailable"
-    except modelclient.ModelUnavailable:
+        assert False, "expected ModelUnavailableError"
+    except modelclient.ModelUnavailableError:
         pass
 
 
@@ -105,8 +105,8 @@ def test_get_seq2seq_caches_backend_without_loading():
 def test_get_seq2seq_unknown_fails_closed():
     try:
         modelclient.get_seq2seq("not-a-model")
-        assert False, "expected ModelUnavailable"
-    except modelclient.ModelUnavailable:
+        assert False, "expected ModelUnavailableError"
+    except modelclient.ModelUnavailableError:
         pass
 
 

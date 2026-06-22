@@ -17,8 +17,7 @@ def run_training(
     fine_tune_type: str = "lora",
     extra_args: Optional[List[str]] = None
 ) -> int:
-    """
-    Invokes `mlx_lm lora` via subprocess to run QLoRA / LoRA training.
+    """Invokes `mlx_lm lora` via subprocess to run QLoRA / LoRA training.
     """
     # Verify dataset files exist
     data_path = Path(data_dir)
@@ -77,7 +76,8 @@ def run_training(
             if not line and process.poll() is not None:
                 break
             if line:
-                sys.stdout.write(str(line)); sys.stdout.flush()
+                sys.stdout.write(str(line))
+                sys.stdout.flush()
                 
         process.wait()
         return process.returncode

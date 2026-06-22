@@ -23,6 +23,7 @@ dependencies = [
     "scikit-learn",
     "transformer_lens",
     "sae_lens",
+    "vaderSentiment>=3.3.2",
 ]
 
 [project.optional-dependencies]
@@ -52,5 +53,5 @@ environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "T201", "N"]  # N = pep8-naming (catches single-letter uppercase variables)
+select = ["E", "F", "T201", "N", "D212"]  # N = pep8-naming; D212 = docstring summary on the first line
 ignore = []

@@ -17,7 +17,6 @@
 # 4. Fleet Integration: Provides `/health` and `/metrics` for Traefik routing
 #    and the Go sidecar container to scrape.
 # ==============================================================================
-import asyncio
 import logging
 import os
 import json
@@ -25,10 +24,9 @@ import uuid
 import urllib.request
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import Dict, Optional, Any
+from typing import Dict, Optional
 from collections import OrderedDict
 from enum import Enum
-import sys
 from pathlib import Path
 
 from paling import bento
@@ -92,8 +90,7 @@ class BanchanEventProducer:
 producer = BanchanEventProducer()
 
 class BanchanExecutor:
-    """
-    Runs an external tool bundled as part of a Bento.
+    """Runs an external tool bundled as part of a Bento.
     Tool may be in any language; not expected to share runtime with paling.
     Communication: Kafka events + stdout/stderr capture.
 

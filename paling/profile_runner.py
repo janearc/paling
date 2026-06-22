@@ -1,4 +1,3 @@
-import json
 import logging
 from pathlib import Path
 from typing import Optional, Any
@@ -15,8 +14,7 @@ def profile_single_file(
     model_path: Optional[str] = None,
     include_git: bool = True
 ) -> bool:
-    """
-    Profiles a single markdown file and saves its taxonometry JSON.
+    """Profiles a single markdown file and saves its taxonometry JSON.
     """
     try:
         if not file_path.exists():
@@ -39,7 +37,8 @@ def profile_single_file(
         doc_stem = file_path.stem
         logger.info(f"📊 Profiling document '{doc_stem}' ({file_path.name})...")
         
-        # Calculate taxonometry metrics (falls back to lexical heuristics if model/tokenizer are None)
+        # Calculate taxonometry metrics
+        # (falls back to lexical heuristics if model/tokenizer are None)
         profiled = profile_document(
             text=content,
             title=doc_stem,
@@ -55,7 +54,9 @@ def profile_single_file(
                 git_stats = get_git_stats(str(file_path))
                 profiled.git_stats = git_stats
             except Exception as e:
-                logger.info(f"⚠️ Warning: Failed to extract Git statistics for {file_path.name}: {e}")
+                logger.info(
+                    f"Warning: Failed to extract Git statistics for {file_path.name}: {e}"
+                )
                 
         # Write to JSON
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -82,8 +83,7 @@ def profile_directory(
     include_git: bool = True,
     fix_only: bool = False
 ):
-    """
-    Profiles all markdown files in a directory recursively.
+    """Profiles all markdown files in a directory recursively.
     """
     if not input_dir.exists() or not input_dir.is_dir():
         raise ValueError(f"Input directory '{input_dir}' is not valid.")

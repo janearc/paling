@@ -31,8 +31,7 @@ except ImportError:
     HookedTransformer = None
 
 class Traceur:
-    """
-    Near-real-time model perimeter performance diagnostic tool using mechanistic
+    """Near-real-time model perimeter performance diagnostic tool using mechanistic
     interpretability to track generation trajectory.
     """
     def __init__(self):
@@ -49,8 +48,7 @@ class Traceur:
         self.trace: List[Dict[str, Any]] = []
 
     def attach(self, model: Any) -> None:
-        """
-        Prepares the model for mechanistic interpretability tracking.
+        """Prepares the model for mechanistic interpretability tracking.
         Wraps the model into a HookedTransformer if it isn't one already.
         """
         if HookedTransformer is not None and isinstance(model, HookedTransformer):
@@ -69,8 +67,7 @@ class Traceur:
                 self.model = model
 
     def hook_activations(self, text: str) -> np.ndarray:
-        """
-        Extracts latent features during generation.
+        """Extracts latent features during generation.
         Returns the residual stream of the last token.
         """
         if self.model is None:
@@ -88,11 +85,13 @@ class Traceur:
             latent_vector = resid_post[0, -1, :].detach().cpu().numpy()
             return latent_vector
         else:
-            raise RuntimeError("HookedTransformer is required but not attached to the model. Cannot hook activations.")
+            raise RuntimeError(
+                "HookedTransformer is required but not attached to the model. "
+                "Cannot hook activations."
+            )
 
     def update_trajectory(self, latent_vector: np.ndarray) -> float:
-        """
-        Acts as a Kalman Filter over the latent vector to track trajectory momentum.
+        """Acts as a Kalman Filter over the latent vector to track trajectory momentum.
         Calculates and returns a mathematical deviation/innovation score.
         """
         dim = latent_vector.shape[0]
@@ -105,15 +104,15 @@ class Traceur:
             
         # Prediction step
         x_pred = self.state_estimate
-        P_pred = self.error_cov + self.process_noise
+        p_pred = self.error_cov + self.process_noise
         
         # Update step
         innovation = latent_vector - x_pred  # Innovation / deviation
-        innovation_cov = P_pred + self.measurement_noise
-        kalman_gain = P_pred / innovation_cov
+        innovation_cov = p_pred + self.measurement_noise
+        kalman_gain = p_pred / innovation_cov
         
         self.state_estimate = x_pred + kalman_gain * innovation
-        self.error_cov = (1 - kalman_gain) * P_pred
+        self.error_cov = (1 - kalman_gain) * p_pred
         
         # Calculate innovation score (L2 norm of the innovation vector)
         innovation_score = float(np.linalg.norm(innovation))
@@ -121,8 +120,7 @@ class Traceur:
         return innovation_score
 
     def step(self, text: str) -> float:
-        """
-        Convenience method to process text, hook activations, update trajectory,
+        """Convenience method to process text, hook activations, update trajectory,
         and record the trace.
         """
         latent_vector = self.hook_activations(text)
@@ -138,8 +136,7 @@ class Traceur:
         return innovation_score
 
     def dump_trace(self, filepath: str) -> None:
-        """
-        Writes out a comprehensive JSON blob containing the human text,
+        """Writes out a comprehensive JSON blob containing the human text,
         deviation scores, and mechanistic interpretability states (the "trace").
         """
         config_dict = "Unknown"
@@ -162,6 +159,8 @@ class Traceur:
                 json.dump(data, f, indent=2)
             logger.info(f"Successfully dumped mechanistic interpretability trace to: {filepath}")
         except Exception as e:
-            logger.error(f"Critical failure dumping mechanistic interpretability trace to {filepath}: {e}")
+            logger.error(
+                f"Critical failure dumping mechanistic interpretability trace to {filepath}: {e}"
+            )
             # We swallow the error here because failing to dump a diagnostic trace 
             # should never crash the primary inference loop.

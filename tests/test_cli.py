@@ -62,13 +62,19 @@ def test_paint_args_parsing(monkeypatch):
     assert result.stderr == ""
 
 def test_reward_function():
-    from paling.reward import score_response
-    # Novelty gives 0.2, length gives 5/200 * 0.4 = 0.01 -> total 0.21
-    assert abs(score_response("short") - 0.21) < 1e-5
-    # Check that a repeated string loses novelty
-    assert abs(score_response("short") - 0.01) < 1e-5
-    
-    # Long response with cue word
-    long_resp = "a" * 31 + " star"
-    # length: 36/200 * 0.4 = 0.072, cue: 1/10 * 0.4 = 0.04, novelty: 0.2 -> 0.312
-    assert abs(score_response(long_resp) - 0.312) < 1e-5
+    from paling.reward import score_response, _emotional_charge, _SEEN
+
+    # Sentiment, not a word checklist, drives the reward: a genuinely felt line
+    # has more emotional charge than flat, factual prose -- in either direction.
+    felt = "I love you so much it terrifies me."
+    flat = "The package shipped on Tuesday."
+    assert _emotional_charge(felt) > _emotional_charge(flat)
+
+    # Score stays in [0, 1], and the novelty bonus is only paid on first sight.
+    _SEEN.clear()
+    first = score_response(felt)
+    assert 0.0 <= first <= 1.0
+    assert score_response(felt) < first  # exact repeat loses the 0.2 novelty bonus
+
+    # Empty response scores zero.
+    assert score_response("") == 0.0

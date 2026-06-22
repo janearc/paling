@@ -23,6 +23,7 @@ dependencies = [
     "scikit-learn",
     "transformer_lens",
     "sae_lens",
+    "vaderSentiment>=3.3.2",
 ]
 
 [project.optional-dependencies]

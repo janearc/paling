@@ -900,6 +900,7 @@ dependencies = [
     { name = "transformer-lens", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "umap-learn", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "uvicorn", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
+    { name = "vadersentiment", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "wordfreq", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
 ]
 
@@ -934,6 +935,7 @@ requires-dist = [
     { name = "transformer-lens" },
     { name = "umap-learn" },
     { name = "uvicorn", specifier = ">=0.49.0" },
+    { name = "vadersentiment", specifier = ">=3.3.2" },
     { name = "wordfreq", specifier = ">=3.1.0" },
 ]
 provides-extras = ["dev", "gguf"]
@@ -1764,6 +1766,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c4/1f/fa18009dea8469069cca78a4e877a008ab78f08b064bfc9ab891579077ff/uvicorn-0.49.0.tar.gz", hash = "sha256:ebf4271aa580d9de97f93192d4595176df6e91f9aae919ca73e4fc07df1e66a3", size = 91284, upload-time = "2026-06-03T22:01:30.448Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/88/fa/e1388bbcf24ef3274f45c0c1c7b501fd14971037c1b6ee23610553307497/uvicorn-0.49.0-py3-none-any.whl", hash = "sha256:ba3d14c3ee7e41c6c654c46c9eb489d33213cdd30aa1696eab1374337c13f68f", size = 71376, upload-time = "2026-06-03T22:01:29.037Z" },
+]
+
+[[package]]
+name = "vadersentiment"
+version = "3.3.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/77/8c/4a48c10a50f750ae565e341e697d74a38075a3e43ff0df6f1ab72e186902/vaderSentiment-3.3.2.tar.gz", hash = "sha256:5d7c06e027fc8b99238edb0d53d970cf97066ef97654009890b83703849632f9", size = 2466783, upload-time = "2020-05-22T15:06:32.81Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/76/fc/310e16254683c1ed35eeb97386986d6c00bc29df17ce280aed64d55537e9/vaderSentiment-3.3.2-py2.py3-none-any.whl", hash = "sha256:3bf1d243b98b1afad575b9f22bc2cb1e212b94ff89ca74f8a23a588d024ea311", size = 125950, upload-time = "2020-05-22T15:07:00.052Z" },
 ]
 
 [[package]]
